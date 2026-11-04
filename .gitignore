@@ -1,0 +1,25 @@
+# Ambiente e artefatos do build (recriados pelo build.bat)
+.venv*/
+build/
+dist/
+*.spec
+*.log
+
+# Cache do Python
+__pycache__/
+*.py[cod]
+
+# Configuração local do Claude Code (permissões pessoais)
+.claude/settings.local.json
+
+# Editores e sistema
+.vscode/
+.idea/
+Thumbs.db
+
+# Segredos, certificados e chaves de assinatura de código
+.env
+*.pem
+*.pfx
+*.p12
+*.key

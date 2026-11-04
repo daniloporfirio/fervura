@@ -1,0 +1,5 @@
+pyserial>=3.5
+psutil>=5.9
+pystray>=0.19
+Pillow>=13.0.0
+pythonnet>=3.0.5

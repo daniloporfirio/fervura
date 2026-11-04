@@ -1,0 +1,10 @@
+# Normaliza as quebras de linha dos arquivos de texto no repositório
+* text=auto
+
+# O cmd e o Inno Setup exigem CRLF (o Fervura.iss também mantém o BOM UTF-8)
+*.bat text eol=crlf
+*.iss text eol=crlf
+
+# Binários
+*.png binary
+*.ico binary
