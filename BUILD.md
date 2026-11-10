@@ -62,15 +62,20 @@ O script, em ordem:
    `pip install --upgrade` (pacotes já instalados no ambiente também sobem até as versões
    mínimas pedidas, como `Pillow>=13.0.0` e `setuptools>=84.1.0`). O `setuptools` é usado só no
    build: o PyInstaller roda com `--exclude-module setuptools` e ele não vai para o programa;
-2. roda os testes (`tests\test_protocol.py`, `tests\test_app.py`, `tests\test_datadir.py`);
+2. roda os testes (`tests\test_protocol.py`, `tests\test_app.py`, `tests\test_datadir.py`,
+   `tests\test_updates.py`);
 3. roda `tools\prepare_build.py`, que baixa a biblioteca e o PawnIO e gera o ícone, a lista
    de componentes exibida pelo instalador e os avisos de terceiros;
 4. empacota com o PyInstaller em `dist\Fervura\`;
-5. compila o instalador com o Inno Setup em `dist\`.
+5. lê a versão de `fervura\__init__.py`, mostra `Versao: X.Y.Z` e compila o instalador com o
+   Inno Setup em `dist\` (`/DAppVersion=X.Y.Z`).
 
 Se algo falhar, o script para e mostra `=== FALHOU`. A mensagem logo acima indica a etapa.
 
-Para mudar a versão do instalador, edite `#define AppVersion` em `installer\Fervura.iss`.
+Para mudar a versão, edite só `__version__ = "X.Y.Z"` em `fervura\__init__.py`. O build a passa
+ao Inno Setup e para com "Versao invalida ou ausente…" se ela não estiver no formato `X.Y.Z`. O
+`installer\Fervura.iss` não guarda a versão: compilado à mão sem `/DAppVersion`, gera
+`Fervura-Setup-0.0.0-dev.exe`.
 
 ## 4. Testar antes de distribuir
 

@@ -25,7 +25,7 @@ echo === Instalando dependencias de build
 %VPY% -m pip install --upgrade -r requirements-build.txt || goto :fail
 
 echo === Testes
-%VPY% -m unittest tests\test_protocol.py tests\test_app.py tests\test_datadir.py || goto :fail
+%VPY% -m unittest tests\test_protocol.py tests\test_app.py tests\test_datadir.py tests\test_updates.py || goto :fail
 
 echo === Baixando LibreHardwareMonitorLib e PawnIO, gerando listas
 %VPY% tools\prepare_build.py || goto :fail
@@ -53,7 +53,15 @@ if not defined ISCC (
     echo ISCC.exe do Inno Setup 6 nao encontrado.
     goto :fail
 )
-"%ISCC%" installer\Fervura.iss || goto :fail
+rem Versao: fonte unica em fervura\__init__.py (__version__), no formato X.Y.Z
+set "APPVER="
+for /f "usebackq delims=" %%V in (`%VPY% -c "import re, fervura; v = fervura.__version__; print(v if re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', v) else '')"`) do set "APPVER=%%V"
+if not defined APPVER (
+    echo Versao invalida ou ausente em fervura\__init__.py: use __version__ = "X.Y.Z"
+    goto :fail
+)
+echo Versao: %APPVER%
+"%ISCC%" /DAppVersion=%APPVER% installer\Fervura.iss || goto :fail
 
 echo.
 echo === Pronto: veja a pasta dist\

@@ -63,7 +63,7 @@ Detalhes em [BUILD.md](BUILD.md).
 Para rodar só os testes automatizados:
 
 ```
-py -3.12 -m unittest tests/test_protocol.py tests/test_app.py tests/test_datadir.py -v
+py -3.12 -m unittest tests/test_protocol.py tests/test_app.py tests/test_datadir.py tests/test_updates.py -v
 ```
 
 ## Documentação

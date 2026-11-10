@@ -15,6 +15,8 @@ log = logging.getLogger(__name__)
 APP_NAME = datadir.APP_NAME
 SOURCES = {"cpu": "Temperatura da CPU", "gpu": "Temperatura da GPU", "max": "Maior das duas"}
 DEFAULT_SOURCE = "cpu"
+# config.json keys: "source" (one of SOURCES) and "check_updates" (bool, off by default:
+# without it the program never touches the network)
 MAX_CONFIG_BYTES = 64 * 1024  # the real file has a few bytes
 
 # None without a data folder (ProgramData not resolvable); only used when storage_ready
@@ -27,8 +29,8 @@ LEGACY_CONFIG_FILE = Path(os.environ.get("APPDATA", Path.home())) / APP_NAME / "
 storage_ready = False
 
 
-def _read_source(path: Path) -> str | None:
-    """The "source" stored in `path`; None if missing, unsafe, too big or invalid."""
+def _read_config(path: Path) -> dict | None:
+    """The JSON object stored in `path`; None if missing, unsafe, too big or invalid."""
     if not datadir.is_safe_file(path):
         log.warning("ignoring %s: link or hard link", path)
         return None
@@ -41,16 +43,30 @@ def _read_source(path: Path) -> str | None:
         data = json.loads(raw.decode("utf-8-sig"))
     except (OSError, ValueError, RecursionError):  # RecursionError: deeply nested JSON
         return None
-    if not isinstance(data, dict):  # valid JSON, but not an object
-        return None
-    source = data.get("source")
-    return source if isinstance(source, str) and source in SOURCES else None
+    return data if isinstance(data, dict) else None  # valid JSON, but not an object
+
+
+def _valid_source(value) -> str | None:
+    return value if isinstance(value, str) and value in SOURCES else None
+
+
+def _read_source(path: Path) -> str | None:
+    """The "source" stored in `path`; None if missing, unsafe, too big or invalid."""
+    data = _read_config(path)
+    return None if data is None else _valid_source(data.get("source"))
+
+
+def _known_keys(data: dict) -> dict:
+    """Exactly the known keys, each validated; anything invalid gets its default.
+    check_updates is a strict bool: only JSON true turns it on (not 1, "true"...)."""
+    return {"source": _valid_source(data.get("source")) or DEFAULT_SOURCE,
+            "check_updates": data.get("check_updates") is True}
 
 
 def load() -> dict:
     """Only the known keys; anything else in the file is dropped."""
-    source = _read_source(CONFIG_FILE) if storage_ready else None
-    return {"source": source or DEFAULT_SOURCE}
+    data = _read_config(CONFIG_FILE) if storage_ready else None
+    return _known_keys(data or {})
 
 
 def save(data: dict) -> None:
@@ -61,10 +77,7 @@ def save(data: dict) -> None:
     if not datadir.is_safe_file(CONFIG_FILE):
         log.warning("settings not saved: %s is a link or hard link", CONFIG_FILE)
         return
-    source = data.get("source")
-    if source not in SOURCES:
-        source = DEFAULT_SOURCE
-    CONFIG_FILE.write_text(json.dumps({"source": source}, indent=2), encoding="utf-8")
+    CONFIG_FILE.write_text(json.dumps(_known_keys(data), indent=2), encoding="utf-8")
 
 
 def migrate_legacy() -> None:

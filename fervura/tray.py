@@ -37,7 +37,9 @@ def render(value: int | None, connected: bool) -> Image.Image:
 
 class Tray:
     def __init__(self, on_open: Callable[[], None], on_quit: Callable[[], None],
-                 get_source: Callable[[], str], set_source: Callable[[str], None]):
+                 get_source: Callable[[], str], set_source: Callable[[str], None],
+                 get_update: Callable[[], str | None] = lambda: None,
+                 on_update: Callable[[], None] = lambda: None):
         def source_item(key: str):
             return pystray.MenuItem(
                 SOURCES[key], lambda: set_source(key),
@@ -45,6 +47,9 @@ class Tray:
 
         menu = pystray.Menu(
             pystray.MenuItem("Abrir", lambda: on_open(), default=True),
+            # "Nova versão X.Y.Z disponível": only while there is one; opens the release page
+            pystray.MenuItem(lambda _: get_update() or "", lambda: on_update(),
+                             visible=lambda _: get_update() is not None),
             pystray.Menu.SEPARATOR,
             *(source_item(k) for k in SOURCES),
             pystray.Menu.SEPARATOR,

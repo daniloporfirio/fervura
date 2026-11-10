@@ -177,6 +177,9 @@ class PickTest(unittest.TestCase):
         self.assertEqual(_pick(sensors, "Temperature", ("tctl",)), 52.5)
 
 
+DEFAULTS = {"source": "cpu", "check_updates": False}
+
+
 class SettingsLoadTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -194,27 +197,51 @@ class SettingsLoadTest(unittest.TestCase):
     def test_deeply_nested_json_falls_back_to_default(self):
         for data in (b"[" * 100000, b'{"a":' * 100000):
             with self.subTest(data=data[:8]):
-                self.assertEqual(self.load_bytes(data), {"source": "cpu"})
+                self.assertEqual(self.load_bytes(data), DEFAULTS)
 
     def test_unknown_keys_are_dropped_and_not_saved(self):
         conf = self.load_bytes(json.dumps({"source": "gpu", "cmd": "calc.exe"}).encode())
-        self.assertEqual(conf, {"source": "gpu"})
+        self.assertEqual(conf, {"source": "gpu", "check_updates": False})
         settings.save(conf)
-        self.assertEqual(json.loads(self.file.read_text(encoding="utf-8")), {"source": "gpu"})
-        settings.save({"source": "max", "extra": 1})
-        self.assertEqual(json.loads(self.file.read_text(encoding="utf-8")), {"source": "max"})
+        self.assertEqual(json.loads(self.file.read_text(encoding="utf-8")),
+                         {"source": "gpu", "check_updates": False})
+        settings.save({"source": "max", "check_updates": True, "extra": 1})
+        self.assertEqual(json.loads(self.file.read_text(encoding="utf-8")),
+                         {"source": "max", "check_updates": True})
+
+    def test_check_updates_is_a_strict_bool(self):
+        conf = self.load_bytes(b'{"source": "gpu", "check_updates": true}')
+        self.assertEqual(conf, {"source": "gpu", "check_updates": True})
+        for value in (1, "true", "sim", None, [], [True], {}, 0, False, 1.0):
+            with self.subTest(value=value):
+                conf = self.load_bytes(json.dumps({"source": "gpu", "check_updates": value}).encode())
+                self.assertEqual(conf, {"source": "gpu", "check_updates": False})
+        self.assertFalse(self.load_bytes(b'{"source": "gpu"}')["check_updates"])  # off by default
+
+    def test_check_updates_saved_as_strict_bool(self):
+        settings.save({"source": "gpu", "check_updates": True})
+        self.assertEqual(settings.load(), {"source": "gpu", "check_updates": True})
+        self.assertIs(json.loads(self.file.read_text(encoding="utf-8"))["check_updates"], True)
+        for value in (1, "true", None):
+            with self.subTest(value=value):
+                settings.save({"source": "gpu", "check_updates": value})
+                self.assertIs(json.loads(self.file.read_text(encoding="utf-8"))["check_updates"],
+                              False)
+        settings.save({"source": ["gpu"]})  # unhashable source: default, no exception
+        self.assertEqual(settings.load(), DEFAULTS)
 
     def test_oversized_file_falls_back_to_default(self):
-        data = b'{"source": "gpu", "pad": "' + b"x" * settings.MAX_CONFIG_BYTES + b'"}'
-        self.assertEqual(self.load_bytes(data), {"source": "cpu"})
+        data = b'{"source": "gpu", "check_updates": true, "pad": "' + b"x" * settings.MAX_CONFIG_BYTES + b'"}'
+        self.assertEqual(self.load_bytes(data), DEFAULTS)
 
     def test_storage_not_ready_reads_and_writes_nothing(self):
-        self.file.write_text('{"source": "gpu"}', encoding="utf-8")
+        self.file.write_text('{"source": "gpu", "check_updates": true}', encoding="utf-8")
         with mock.patch.object(settings, "storage_ready", False):
-            self.assertEqual(settings.load(), {"source": "cpu"})
+            self.assertEqual(settings.load(), DEFAULTS)
             with self.assertLogs("fervura.settings", logging.WARNING):
                 settings.save({"source": "max"})
-        self.assertEqual(json.loads(self.file.read_text(encoding="utf-8")), {"source": "gpu"})
+        self.assertEqual(json.loads(self.file.read_text(encoding="utf-8")),
+                         {"source": "gpu", "check_updates": True})
 
     @unittest.skipUnless(hasattr(os, "link"), "hard links not available")
     def test_hard_linked_config_is_not_read_nor_written(self):
@@ -225,14 +252,14 @@ class SettingsLoadTest(unittest.TestCase):
         except OSError as e:
             self.skipTest(f"hard link not supported here: {e}")
         with self.assertLogs("fervura.settings", logging.WARNING):
-            self.assertEqual(settings.load(), {"source": "cpu"})
+            self.assertEqual(settings.load(), DEFAULTS)
             settings.save({"source": "max"})
         self.assertEqual(other.read_text(encoding="utf-8"), '{"source": "gpu"}')
 
     def test_non_object_json_falls_back_to_default(self):
         for text in ("[]", "null", '"cpu"', "123", "true", '["gpu"]'):
             with self.subTest(text=text):
-                self.assertEqual(self.load_bytes(text.encode()), {"source": "cpu"})
+                self.assertEqual(self.load_bytes(text.encode()), DEFAULTS)
 
     def test_invalid_source_type_falls_back_to_default(self):
         for source in (["cpu"], {"x": 1}, 1, None, "xyz"):
@@ -241,17 +268,17 @@ class SettingsLoadTest(unittest.TestCase):
                 self.assertEqual(conf["source"], "cpu")
 
     def test_corrupted_or_missing_file(self):
-        self.assertEqual(self.load_bytes(b"{lixo"), {"source": "cpu"})
-        self.assertEqual(self.load_bytes(b"\xff\xfe\x00"), {"source": "cpu"})
+        self.assertEqual(self.load_bytes(b"{lixo"), DEFAULTS)
+        self.assertEqual(self.load_bytes(b"\xff\xfe\x00"), DEFAULTS)
         self.file.unlink()
-        self.assertEqual(settings.load(), {"source": "cpu"})
+        self.assertEqual(settings.load(), DEFAULTS)
 
     def test_utf8_bom_is_accepted(self):
         self.assertEqual(self.load_bytes(b'\xef\xbb\xbf{"source":"gpu"}')["source"], "gpu")
 
     def test_save_and_load_roundtrip(self):
         settings.save({"source": "max"})
-        self.assertEqual(settings.load(), {"source": "max"})
+        self.assertEqual(settings.load(), {"source": "max", "check_updates": False})
 
 
 class SettingsMigrationTest(unittest.TestCase):
@@ -272,11 +299,13 @@ class SettingsMigrationTest(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def test_migrates_only_source_and_keeps_old_file(self):
-        old_bytes = b'\xef\xbb\xbf{"source": "gpu", "x": [1, 2]}'
+        # check_updates is not migrated either: it starts off (opt-in) in the new file
+        old_bytes = b'\xef\xbb\xbf{"source": "gpu", "check_updates": true, "x": [1, 2]}'
         self.old.write_bytes(old_bytes)
         settings.migrate_legacy()
-        self.assertEqual(json.loads(self.new.read_text(encoding="utf-8")), {"source": "gpu"})
-        self.assertEqual(settings.load(), {"source": "gpu"})
+        expected = {"source": "gpu", "check_updates": False}
+        self.assertEqual(json.loads(self.new.read_text(encoding="utf-8")), expected)
+        self.assertEqual(settings.load(), expected)
         self.assertEqual(self.old.read_bytes(), old_bytes)  # never deleted nor changed
         self.assertEqual(sorted(p.name for p in self.old.parent.iterdir()), ["config.json"])
 
@@ -284,7 +313,7 @@ class SettingsMigrationTest(unittest.TestCase):
         self.new.write_text('{"source": "max"}', encoding="utf-8")
         self.old.write_text('{"source": "gpu"}', encoding="utf-8")
         settings.migrate_legacy()
-        self.assertEqual(settings.load(), {"source": "max"})
+        self.assertEqual(settings.load()["source"], "max")
 
     def test_invalid_or_missing_old_file_writes_nothing(self):
         settings.migrate_legacy()
@@ -294,7 +323,7 @@ class SettingsMigrationTest(unittest.TestCase):
                 self.old.write_bytes(data)
                 settings.migrate_legacy()
                 self.assertFalse(self.new.exists())
-                self.assertEqual(settings.load(), {"source": "cpu"})
+                self.assertEqual(settings.load(), DEFAULTS)
 
     def test_write_error_does_not_stop_the_start(self):
         self.old.write_text('{"source": "gpu"}', encoding="utf-8")
@@ -415,7 +444,8 @@ class SetSourceSaveErrorTest(unittest.TestCase):
         self.file.parent.mkdir()
         self.app.set_source("max")
         self.assertEqual(self.app.save_problem, "")
-        self.assertEqual(json.loads(self.file.read_text(encoding="utf-8")), {"source": "max"})
+        self.assertEqual(json.loads(self.file.read_text(encoding="utf-8")),
+                         {"source": "max", "check_updates": False})
         self.assertEqual(self.app.status_text("ok", "nota"), "ok — nota")
 
 

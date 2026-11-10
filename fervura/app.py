@@ -12,7 +12,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import datadir, settings, system
+from . import __version__, datadir, settings, system, updates
 from .protocol import Readings, build_frame
 from .sensors import SensorHub, Snapshot
 
@@ -28,6 +28,7 @@ SAVE_ERROR_STATUS = "configuração não salva"
 CPU_WARNING = "Temperatura da CPU indisponível. Veja o log.txt em %ProgramData%\\Fervura."
 STORAGE_WARNING = ("A pasta %ProgramData%\\Fervura não pôde ser protegida: "
                    "a configuração não é salva e não há log.txt.")
+OPEN_PAGE_ERROR = "não foi possível abrir o navegador; use Copiar link"
 
 
 @dataclass
@@ -147,15 +148,28 @@ def warnings_text(s: Snapshot, storage_ready: bool) -> str:
     return "\n".join(lines)
 
 
+def update_text(release: updates.Release | None) -> str | None:
+    """Line shown in the window and in the tray when a newer version exists."""
+    return None if release is None else f"Nova versão {release.text} disponível"
+
+
+def tray_tip(shown: int | None, status: str, release: updates.Release | None) -> str:
+    """Tray tooltip: value, the new version notice (if any) and the status; 127 chars max."""
+    lines = [f"Fervura: {'--' if shown is None else shown}", update_text(release), status]
+    return "\n".join(line for line in lines if line)[:127]
+
+
 class App:
-    def __init__(self, root, sender: Sender, conf: dict):
+    def __init__(self, root, sender: Sender, conf: dict,
+                 checker: updates.UpdateChecker | None = None):
         import tkinter as tk
         from tkinter import ttk
 
         from .tray import Tray
 
-        self.sender, self.conf = sender, conf
+        self.sender, self.conf, self.checker = sender, conf, checker
         self.save_problem = ""  # last error saving config.json, shown in the status line
+        self.release: updates.Release | None = None  # newer version found, if any
         self.events: queue.Queue = queue.Queue()  # callables from the tray thread
 
         self.root = root
@@ -212,6 +226,21 @@ class App:
                         command=self.toggle_autostart).grid(row=0, column=0, sticky="w")
         ttk.Button(opts, text="Sair", command=self.quit).grid(row=0, column=2)
         ttk.Button(opts, text="Ocultar", command=self.hide).grid(row=0, column=1, padx=6)
+        self.check_updates_var = tk.BooleanVar(value=conf["check_updates"])
+        ttk.Checkbutton(opts, text="Verificar atualizações", variable=self.check_updates_var,
+                        command=lambda: self.set_check_updates(self.check_updates_var.get())).grid(
+            row=1, column=0, sticky="w")
+        # new version notice; hidden until the update check finds one
+        self.update_frame = ttk.Frame(opts)
+        self.update_frame.grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self.update_var = tk.StringVar(value="")
+        ttk.Label(self.update_frame, textvariable=self.update_var, foreground="#1a5fb4",
+                  wraplength=320).grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Button(self.update_frame, text="Abrir página de download",
+                   command=self.open_release_page).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Button(self.update_frame, text="Copiar link", command=self.copy_release_link).grid(
+            row=1, column=1, sticky="w", padx=6, pady=(4, 0))
+        self.update_frame.grid_remove()
         opts.columnconfigure(0, weight=1)
 
         self.tray = Tray(
@@ -219,6 +248,8 @@ class App:
             on_quit=lambda: self.events.put(self.quit),
             get_source=lambda: self.conf["source"],
             set_source=lambda key: self.events.put(lambda: self.set_source(key)),
+            get_update=lambda: update_text(self.release),
+            on_update=lambda: self.events.put(self.open_release_page),
         )
 
     # -- actions (always on the Tk thread)
@@ -232,14 +263,13 @@ class App:
 
     def quit(self) -> None:
         self.sender.stop()
+        if self.checker is not None:
+            self.checker.stop()
         self.tray.stop()
         self.root.destroy()
 
-    def set_source(self, key: str) -> None:
-        """The new source applies to this session even if it cannot be saved."""
-        self.conf["source"] = key
-        self.source_var.set(key)
-        self.sender.source = key
+    def save_conf(self) -> None:
+        """Saves config.json; an error is logged and kept in the status line until a save works."""
         try:
             settings.save(self.conf)
         except OSError as e:
@@ -248,6 +278,58 @@ class App:
             self.status_var.set(self.save_problem)  # kept by render() until a save works
         else:
             self.save_problem = ""
+
+    def set_source(self, key: str) -> None:
+        """The new source applies to this session even if it cannot be saved."""
+        self.conf["source"] = key
+        self.source_var.set(key)
+        self.sender.source = key
+        self.save_conf()
+
+    def set_check_updates(self, enabled: bool) -> None:
+        """Turning it on checks right away; off, no request is made and the notice goes away.
+        Applies to this session even if it cannot be saved."""
+        self.conf["check_updates"] = enabled
+        self.check_updates_var.set(enabled)
+        if self.checker is not None:
+            self.checker.set_enabled(enabled)
+        if not enabled:
+            self.show_release(None)
+        self.save_conf()
+
+    def show_release(self, release: updates.Release | None, note: str = "") -> None:
+        """Shows (or hides, with None) the new version line under the options."""
+        self.release = release
+        if release is None:
+            self.update_frame.grid_remove()
+            return
+        self.update_var.set(" — ".join(p for p in (update_text(release), note) if p))
+        self.update_frame.grid()
+
+    def open_release_page(self) -> None:
+        """Opens the release page in the user's normal browser, never an elevated one
+        (shellexec). If that fails, the window shows the line with "Copiar link"."""
+        release = self.release
+        if release is None:
+            return
+        from . import shellexec
+
+        def done(error: str | None) -> None:  # runs on the opener thread
+            if error is not None:
+                self.events.put(lambda: self.release_page_failed(release, error))
+
+        shellexec.open_url(release.url, done)
+
+    def release_page_failed(self, release: updates.Release, error: str) -> None:
+        log.warning("could not open %s: %s", release.url, error)
+        if self.release == release:
+            self.show_release(release, OPEN_PAGE_ERROR)
+            self.show()
+
+    def copy_release_link(self) -> None:
+        if self.release is not None:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(self.release.url)
 
     def status_text(self, status: str, note: str) -> str:
         """Status line: send status, source note and, while it lasts, the save error."""
@@ -276,7 +358,19 @@ class App:
                 break
         if latest is not None:
             self.render(latest)
+        self.poll_updates()
         self.root.after(200, self.poll)
+
+    def poll_updates(self) -> None:
+        """Applies the newest result of the update check (ignored with the option off)."""
+        found, release = False, None
+        while self.checker is not None:
+            try:
+                release, found = self.checker.results.get_nowait(), True
+            except queue.Empty:
+                break
+        if found and self.conf.get("check_updates") is True and release != self.release:
+            self.show_release(release)
 
     def render(self, u: Update) -> None:
         s = u.snapshot
@@ -295,12 +389,13 @@ class App:
                          else f"{s.gpu_mem_used:.0f} / {s.gpu_mem_total:.0f} MB")
         v["ram_usage"].set(_fmt(s.ram_usage, "%"))
         self.warn_var.set(warnings_text(s, settings.storage_ready))
-        tip = f"Fervura: {'--' if u.shown is None else u.shown}\n{u.status}"
-        self.tray.update(u.shown, u.connected, tip[:127])
+        self.tray.update(u.shown, u.connected, tray_tip(u.shown, u.status, self.release))
 
     def run(self) -> None:
         self.tray.start()
         self.sender.start()
+        if self.checker is not None:
+            self.checker.start()
         self.root.after(200, self.poll)
         self.root.mainloop()
         # the Sender is a daemon: wait briefly so it closes the serial port and the sensors
@@ -396,7 +491,7 @@ def main(argv: list[str] | None = None) -> None:
     storage_problem = datadir.prepare()
     settings.storage_ready = storage_problem is None
     log_problem = _setup_logging(args.verbose, None if storage_problem else datadir.DATA_DIR)
-    log.info("iniciando; administrador=%s", system.is_admin())
+    log.info("Fervura %s iniciando; administrador=%s", __version__, system.is_admin())
     if storage_problem:
         log.warning("data folder not used (%s): no log file, settings not saved",
                     storage_problem)
@@ -435,7 +530,8 @@ def main(argv: list[str] | None = None) -> None:
     settings.migrate_legacy()
     conf = settings.load()
     sender = Sender(hub, args.port, args.dry_run, args.interval, conf["source"], queue.Queue())
-    app = App(root, sender, conf)
+    checker = updates.UpdateChecker(conf["check_updates"])  # no request while it is off
+    app = App(root, sender, conf, checker)
     if not args.minimized:
         root.deiconify()
     app.run()

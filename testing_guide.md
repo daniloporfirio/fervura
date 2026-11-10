@@ -17,6 +17,8 @@ todas as funcionalidades descritas em `specification.md`. Cada caso tem um ident
 | Mudança no instalador | `INS-*`, `DES-*`, `AUT-05` |
 | Mudança em `datadir.py`, em `settings.py` ou na resolução de pastas/usuário em `system.py` | Seção 1 + `CFG-*` + `DAD-*` + `AUT-01`, `AUT-07` + `INI-03`, `INI-11` |
 | Mudança de dependências (`requirements*.txt`) ou das opções do PyInstaller no `build.bat` | Seção 1 + `BLD-01` + `SEC-05` + teste rápido |
+| Mudança em `updates.py` ou `shellexec.py` (aviso de atualização) | Seção 1 + `UPD-*` + `SEC-06` + `TRY-02`, `TRY-04` + `UI-01` |
+| Mudança da versão (`__version__` em `fervura/__init__.py`) ou da forma como o build a passa ao Inno Setup | Seção 1 + `BLD-01`, `BLD-10`, `BLD-11` + `INI-11` + `INS-12` |
 
 Registre os resultados no modelo da seção 6.
 
@@ -28,13 +30,17 @@ Rodam sem hardware e sem administrador; nunca tocam na pasta real `C:\ProgramDat
 (usam pastas temporárias):
 
 ```
-python -m unittest tests/test_protocol.py tests/test_app.py tests/test_datadir.py -v
+python -m unittest tests/test_protocol.py tests/test_app.py tests/test_datadir.py tests/test_updates.py -v
 ```
 
-São 87 testes. No Windows, 2 são pulados (`test_no_data_dir_outside_windows` e
+São 133 testes em 4 arquivos (89 em `test_protocol.py`, `test_app.py` e `test_datadir.py`; 44
+em `test_updates.py`). Nenhum acessa a rede nem o Explorer de verdade (usam respostas e COM
+simulados). No Windows, 2 são pulados (`test_no_data_dir_outside_windows` e
 `test_not_windows_is_refused`, que só valem fora do Windows). Os testes de caminhos do Windows,
 junções e ACL (`DataPathsTest` em parte, `PathWithoutEnvironmentTest`, `PrepareTest`,
-`SafeFileTest.test_junction_is_unsafe`) só rodam no Windows; no Linux/WSL são pulados. Alguns
+`SafeFileTest.test_junction_is_unsafe`) e o de certificados
+(`TransportTest.test_certificates_verified_with_the_windows_store_only`) só rodam no Windows;
+no Linux/WSL são pulados. Alguns
 testes de `PrepareTest` se comportam diferente rodando elevado (indicado na tabela).
 
 No Windows, o `build.bat` os executa e **interrompe o build** se algum falhar.
@@ -59,8 +65,8 @@ No Windows, o `build.bat` os executa e **interrompe o build** se algum falhar.
 | `SenderTest.test_shutdown_closes_display_and_sensors` | `shutdown(3.0)` para a thread, fecha a serial e chama `close()` dos sensores |
 | `SenderTest.test_shutdown_does_not_hang_on_stuck_thread` | Thread travada: `shutdown` desiste no prazo, registra aviso e a thread é *daemon* |
 | `PickTest.test_zero_temperature_counts_as_unavailable` | Temperatura 0 é ignorada; um sensor válido é escolhido |
-| `SettingsLoadTest` (10 testes: `test_deeply_nested_json_falls_back_to_default`, `test_unknown_keys_are_dropped_and_not_saved`, `test_oversized_file_falls_back_to_default`, `test_storage_not_ready_reads_and_writes_nothing`, `test_hard_linked_config_is_not_read_nor_written`, `test_non_object_json_falls_back_to_default`, `test_invalid_source_type_falls_back_to_default`, `test_corrupted_or_missing_file`, `test_utf8_bom_is_accepted`, `test_save_and_load_roundtrip`) | `config.json`: JSON aninhado demais, maior que 64 KiB, corrompido, ausente, não-objeto (`[]`, `null`, `"cpu"`, `123`, `true`) ou com `source` inválido → `cpu`; só `source` é lida e gravada; BOM UTF-8 aceito; sem pasta segura nada é lido nem gravado; hard link não é lido nem gravado (alvo intacto) |
-| `SettingsMigrationTest` (5 testes: `test_migrates_only_source_and_keeps_old_file`, `test_existing_new_file_wins`, `test_invalid_or_missing_old_file_writes_nothing`, `test_write_error_does_not_stop_the_start`, `test_no_migration_without_storage`) | Migração de `%APPDATA%`: copia só `source`; arquivo antigo intacto e nada criado ao lado; arquivo novo existente prevalece; antigo inválido não grava nada; erro de gravação só gera aviso; sem pasta segura não migra |
+| `SettingsLoadTest` (12 testes: `test_deeply_nested_json_falls_back_to_default`, `test_unknown_keys_are_dropped_and_not_saved`, `test_check_updates_is_a_strict_bool`, `test_check_updates_saved_as_strict_bool`, `test_oversized_file_falls_back_to_default`, `test_storage_not_ready_reads_and_writes_nothing`, `test_hard_linked_config_is_not_read_nor_written`, `test_non_object_json_falls_back_to_default`, `test_invalid_source_type_falls_back_to_default`, `test_corrupted_or_missing_file`, `test_utf8_bom_is_accepted`, `test_save_and_load_roundtrip`) | `config.json`: JSON aninhado demais, maior que 64 KiB, corrompido, ausente ou não-objeto (`[]`, `null`, `"cpu"`, `123`, `true`) → padrão (`cpu`, `check_updates` `false`); `source` inválido → `cpu`; só `source` e `check_updates` são lidas e gravadas; `check_updates` só liga com JSON `true` (`1`, `"true"`, `null`, listas, `1.0` → `false`, também ao gravar); `source` não hasheável ao salvar grava o padrão sem exceção; BOM UTF-8 aceito; sem pasta segura nada é lido nem gravado; hard link não é lido nem gravado (alvo intacto) |
+| `SettingsMigrationTest` (5 testes: `test_migrates_only_source_and_keeps_old_file`, `test_existing_new_file_wins`, `test_invalid_or_missing_old_file_writes_nothing`, `test_write_error_does_not_stop_the_start`, `test_no_migration_without_storage`) | Migração de `%APPDATA%`: copia só `source` (`check_updates: true` no antigo não é copiado; o novo fica com `false`); arquivo antigo intacto e nada criado ao lado; arquivo novo existente prevalece; antigo inválido não grava nada; erro de gravação só gera aviso; sem pasta segura não migra |
 | `AutostartXmlTest` (5 testes: `test_xml_written_in_data_folder_and_removed`, `test_user_comes_from_the_token_not_the_environment`, `test_leftover_plain_xml_is_replaced`, `test_refused_without_protected_folder`, `test_refused_when_xml_is_hard_link`) | XML da tarefa gravado na pasta de dados e apagado depois; `UserId` (gatilho e principal) vem do token, não de `USERNAME`/`USERDOMAIN`; sobra comum substituída; recusa sem pasta segura ou com XML em hard link (sem chamar o `schtasks`, alvo intacto) |
 | `SetSourceSaveErrorTest.test_save_error_is_logged_and_shown` | Erro ao salvar: fonte muda na sessão, aviso no log, status "configuração não salva: …" mantido nas atualizações seguintes |
 | `SetSourceSaveErrorTest.test_successful_save_clears_the_error` | Salvamento bem-sucedido limpa a mensagem de erro do status |
@@ -103,6 +109,21 @@ No Windows, o `build.bat` os executa e **interrompe o build** se algum falhar.
 | `PrepareTest.test_hard_linked_file_and_subfolder_are_left_alone` | Arquivo em hard link e subpasta não têm as permissões alteradas; alvo externo intacto |
 | `PrepareTest.test_real_descriptor` | Descritor real: sem elevação recusa e não cria nada; elevado, dono Administradores e Usuários só leitura |
 
+`tests/test_updates.py` (44 testes):
+
+| Teste | Garante |
+|---|---|
+| `VersionTest` (6 testes: `test_accepted_tags`, `test_invalid_tags`, `test_unicode_digits_are_refused`, `test_too_many_digits_without_exception`, `test_non_text_tags`, `test_numeric_comparison`) | Tag `vX.Y.Z` ou `X.Y.Z` aceita; sufixos, partes a mais ou a menos, dígitos de outros alfabetos, mais de 9 dígitos e tipos não texto → `None` sem exceção; comparação numérica (1.10.0 > 1.9.0); tag inválida = sem atualização |
+| `SingleVersionTest` (4 testes: `test_version_format`, `test_build_passes_the_version_to_inno_setup`, `test_installer_takes_the_version_from_the_build`, `test_build_runs_every_test_file`) | `__version__` no formato `X.Y.Z`, usada pelo app, pela comparação e pelo `User-Agent`; `build.bat` em CRLF passa `/DAppVersion=%APPVER%`; `.iss` com BOM e CRLF, só o `#ifndef` de padrão, sem versão fixa, `OutputBaseFilename` com a versão e AppId inalterado; o build roda todos os `tests/test_*.py` |
+| `PageUrlTest` (3 testes: `test_urls_come_from_the_repo_constant`, `test_release_page_of_the_repo_is_accepted`, `test_anything_else_falls_back_to_latest_page`) | URLs derivadas de `UPDATE_REPO`; páginas do repositório aceitas; `http`, outro dono, sufixo no nome, outro host, `..`, `%2e%2e`, espaço, aspas, `\n`, `&`, mais de 2048 caracteres, maiúsculas e tipos errados → `.../releases/latest` |
+| `ParseReleaseTest` (7 testes: `test_valid_answer`, `test_unusable_answers_raise_value_error`, `test_non_object_json`, `test_larger_than_limit`, `test_missing_or_wrong_fields_give_no_update`, `test_bad_html_url_uses_latest_page`, `test_draft_and_prerelease_are_ignored`) | Resposta válida; JSON inválido, aninhado demais ou não objeto → `ValueError` (sem `RecursionError`); acima de 1 MiB recusada; campos ausentes ou de tipo errado = sem atualização; `html_url` ruim → página `latest`; `draft`/`prerelease` diferentes de `false` ignorados |
+| `CheckOnceTest` (6 testes: `test_request_is_https_with_generic_headers`, `test_newer_version_is_published`, `test_reads_at_most_the_limit`, `test_network_errors_never_raise`, `test_failures_logged_once_per_state`, `test_same_result_logged_once`) | `GET` HTTPS em `API_URL` com exatamente os 3 cabeçalhos genéricos e timeout de 10 s; versão maior publicada e logada; leitura de no máximo 1 MiB + 1; HTTP 404/403/500, rede, timeout e resposta inválida nunca lançam exceção nem chegam ao usuário; falhas e resultado logados uma vez por estado ("working again" ao voltar) |
+| `SchedulingTest` (5 testes: `test_disabled_makes_no_request`, `test_turning_on_checks_right_away`, `test_first_check_after_delay_then_daily`, `test_no_request_before_first_delay`, `test_stop_ends_the_thread`) | Desligado: nenhuma requisição; ligar verifica na hora e desligar/religar não repete antes do intervalo mínimo; primeira verificação após o atraso (30 s) e depois a cada 24 h; nada antes do atraso; `stop()` encerra a thread *daemon* |
+| `TransportTest` (2 testes: `test_redirect_only_to_the_github_api`, `test_certificates_verified_with_the_windows_store_only`) | Redirecionamento só para `https://api.github.com/`; no Windows, contexto TLS sem `create_default_context` (ignora `SSL_CERT_FILE`), `CERT_REQUIRED`, conferência do host e certificados carregados (só Windows) |
+| `ShellExecTest` (5 testes: `test_safe_urls`, `test_unsafe_url_is_never_executed`, `test_safe_url_goes_to_the_desktop_shell`, `test_failure_is_reported_not_raised`, `test_no_elevated_fallback_in_the_code`) | `is_safe_url` recusa `http`, `file:`, espaço, aspas, `\n`, `%`, barra vertical e mais de 2048 caracteres; URL insegura nunca chega ao COM; URL segura vai ao Explorer; falha informada sem exceção; o código não usa `webbrowser`, `startfile`, `ShellExecuteW`, `ShellExecuteExW`, `explorer.exe` nem `subprocess`, e usa `CLSCTX_LOCAL_SERVER` |
+| `AppUpdateTest` (5 testes: `test_update_text_and_tray_tip`, `test_result_shown_only_with_option_on`, `test_turning_off_hides_the_notice_and_saves`, `test_open_failure_shows_copy_link`, `test_copy_link`) | Texto "Nova versão X.Y.Z disponível" e dica da bandeja (até 127 caracteres); resultado mostrado só com a opção ligada (resposta tardia ignorada); desligar esconde o aviso e salva `check_updates: false`; falha ao abrir mostra "… — não foi possível abrir o navegador; use Copiar link" e a janela; Copiar link coloca a URL na área de transferência |
+| `TrayUpdateItemTest.test_menu_item_follows_the_notice` | Item "Nova versão X.Y.Z disponível" no menu da bandeja visível só com versão nova, com esse texto; a ação chama `on_update` (abrir a página) |
+
 **Regra:** toda correção de bug que puder ser testada sem hardware deve ganhar um teste aqui.
 
 ---
@@ -141,6 +162,14 @@ uma VM não expõe os sensores reais nem o dispositivo USB.
   migração; nunca apagada).
 - **Log do instalador:** `%TEMP%\Setup Log <data> #NNN.txt`.
 - **Bloqueios de política:** Visualizador de Eventos → *Microsoft → Windows → CodeIntegrity → Operational*.
+- **Conexões de rede** (aviso de atualização): Monitor de Recursos (`resmon`) → aba *Rede* →
+  marcar `Fervura.exe` em *Processos com Atividade de Rede*; ou, num Prompt de Comando como
+  administrador, `netstat -b -n 5` (procure linhas sob `[Fervura.exe]`).
+- **Elevação e processo pai** (abertura do navegador): Gerenciador de Tarefas → *Detalhes* →
+  clique direito no cabeçalho → *Selecionar colunas* → *Elevado*. Processo pai, no PowerShell:
+  `Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" | Select-Object ProcessId, ParentProcessId`
+  (troque pelo executável do navegador padrão) e
+  `Get-Process explorer | Select-Object Id`.
 - **Referência de temperatura:** o aplicativo LibreHardwareMonitor ou o HWiNFO, para comparar valores.
 - **Portas seriais virtuais** (testes de protocolo sem o display): **com0com**, que cria um par
   de portas ligadas entre si (ex.: `COM8` ↔ `COM9`). O Fervura escreve em `COM8` (`--port COM8`)
@@ -189,7 +218,10 @@ Na máquina física, com o display conectado:
 7. [ ] "Iniciar com o Windows" ligado → sair e entrar na conta → ícone aparece sem UAC.
 8. [ ] Sair pelo menu da bandeja encerra o processo em até ~3 s (Gerenciador de Tarefas).
 9. [ ] A janela **não** mostra o aviso laranja "A pasta %ProgramData%\Fervura não pôde ser
-   protegida…"; `C:\ProgramData\Fervura\log.txt` existe e recebe as linhas desta execução.
+   protegida…"; `C:\ProgramData\Fervura\log.txt` existe e recebe as linhas desta execução,
+   começando por "Fervura <versão> iniciando; administrador=True" com a versão do instalador.
+10. [ ] "Verificar atualizações" aparece desmarcada numa instalação nova (ou atualizada a partir de
+   uma versão sem a opção), e nenhum aviso de versão nova é exibido (`UPD-01`).
 
 ---
 
@@ -201,7 +233,7 @@ Formato: **pré-condição → passos → resultado esperado**.
 
 | ID | Caso | Passos | Esperado |
 |---|---|---|---|
-| BLD-01 | Build completo | `build.bat` em máquina com Python 3.12 e Inno Setup | Termina com `=== Pronto`; gera `dist\Fervura\Fervura.exe` e `dist\Fervura-Setup-<versão>.exe` |
+| BLD-01 | Build completo | `build.bat` em máquina com Python 3.12 e Inno Setup | Termina com `=== Pronto`; imprime `Versao: X.Y.Z` (o `__version__` de `fervura\__init__.py`); gera `dist\Fervura\Fervura.exe` e `dist\Fervura-Setup-X.Y.Z.exe` com essa versão (Propriedades → Detalhes → *Versão do produto*) |
 | BLD-02 | Python ausente | `set PY=py -3.99` e `build.bat` | Para com "Python nao encontrado…" e a dica `py install 3.12` |
 | BLD-03 | Teste automático falhando | Quebrar de propósito um teste e rodar `build.bat` | Para na etapa "Testes" com `=== FALHOU`; nenhum instalador novo |
 | BLD-04 | Hash do PawnIO | Trocar um caractere de `PAWNIO_SHA256`, apagar `build\vendor\pawnio` e rodar o build | Para com "SHA-256 do PawnIO_setup.exe não confere" |
@@ -210,6 +242,8 @@ Formato: **pré-condição → passos → resultado esperado**.
 | BLD-07 | Avisos de terceiros | Abrir `build\THIRD_PARTY_NOTICES.txt` | Todas as bibliotecas com licença e URL; PawnIO com SHA-256 |
 | BLD-08 | Manifesto de administrador | Propriedades do `dist\Fervura\Fervura.exe`; o ícone tem o escudo do UAC | Abrir pede UAC |
 | BLD-09 | Ícone | Ver `Fervura.exe` e o instalador no Explorer | Ícone vermelho do Fervura |
+| BLD-10 | Versão vinda do código | Mudar `__version__` em `fervura\__init__.py` para `1.2.3` e rodar o build; depois para `1.2`, `1.2.3-dev` e `x`. Desfazer ao final | Com `1.2.3`: `Versao: 1.2.3`, `dist\Fervura-Setup-1.2.3.exe` com versão do produto 1.2.3 e mesmo AppId. Com os outros: para antes do Inno Setup com "Versao invalida ou ausente em fervura\__init__.py: use __version__ = "X.Y.Z"" e `=== FALHOU`; nenhum instalador novo |
+| BLD-11 | `.iss` compilado à mão | Depois de um build, rodar `ISCC.exe installer\Fervura.iss` sem `/D`; depois com `/DAppVersion=1.2.3` | Sem `/D`: `dist\Fervura-Setup-0.0.0-dev.exe`. Com `/D`: `dist\Fervura-Setup-1.2.3.exe`. Apagar os dois depois |
 
 ### 4.2 Instalador (`INS`)
 
@@ -226,7 +260,7 @@ Formato: **pré-condição → passos → resultado esperado**.
 | INS-09 | Atalhos | Instalar com e sem "ícone na área de trabalho" | — | Menu Iniciar sempre; área de trabalho só quando marcado |
 | INS-10 | Não abre ao final | — | Concluir | Página final **sem** opção de abrir o Fervura; nenhum erro 4551 |
 | INS-11 | Programa aberto | Fervura em execução | Rodar o instalador | O instalador detecta o programa (`AppMutex`) e pede para fechá-lo antes de continuar |
-| INS-12 | Atualização | Versão anterior instalada, fonte = GPU, autostart ligado | Instalar a nova e abrir pelo mesmo usuário | Sem pergunta do PawnIO; fonte continua GPU (migrada de `%APPDATA%` se a versão anterior gravava lá, ver `CFG-06`); tarefa `Fervura` continua existindo |
+| INS-12 | Atualização | Versão anterior instalada, fonte = GPU, autostart ligado | Instalar a nova e abrir pelo mesmo usuário | Sem pergunta do PawnIO; fonte continua GPU (migrada de `%APPDATA%` se a versão anterior gravava lá, ver `CFG-06`); tarefa `Fervura` continua existindo; vindo de uma versão sem a opção, "Verificar atualizações" desmarcada; *Aplicativos* mostra a versão nova |
 | INS-13 | Máquina sem Python | VM/PC limpo | Instalar e abrir | Funciona sem instalar Python ou pacotes |
 
 ### 4.3 Inicialização do programa (`INI`)
@@ -243,7 +277,7 @@ Formato: **pré-condição → passos → resultado esperado**.
 | INI-08 | Instalador do PawnIO ausente | PawnIO desinstalado e `third_party\PawnIO` apagado; abrir; Sim | "Instalador do PawnIO não encontrado… Reinstale o Fervura." e fecha |
 | INI-09 | Biblioteca de sensores ausente | Renomear `_internal\lhm\LibreHardwareMonitorLib.dll`; abrir | "Não foi possível carregar a leitura de sensores: …" e fecha; detalhe no log. Desfazer depois |
 | INI-10 | `--minimized` | Rodar com `--minimized` | Só o ícone na bandeja, sem janela |
-| INI-11 | Log de início | Abrir e ver `C:\ProgramData\Fervura\log.txt` | Linhas "iniciando; administrador=True", "PawnIO x.y.z instalado", temperaturas por hardware; **nenhuma** linha "data folder not used"; nada novo em `%APPDATA%\Fervura` |
+| INI-11 | Log de início | Abrir e ver `C:\ProgramData\Fervura\log.txt` | Linhas "Fervura <versão> iniciando; administrador=True" (ex.: "Fervura 1.0.0 iniciando; administrador=True", com a versão do instalador), "PawnIO x.y.z instalado", temperaturas por hardware; **nenhuma** linha "data folder not used"; nada novo em `%APPDATA%\Fervura` |
 | INI-12 | `--interval` inválido | Num Prompt de Comando: `"C:\Program Files\Fervura\Fervura.exe" --interval 0` (aceitar o UAC); repetir com `0.05`, `-1`, `nan`, `abc`. No código-fonte: `python iniciar.pyw --interval 0` e `echo %ERRORLEVEL%` | Executável: termina sem janela, sem ícone e sem mensagem; nenhuma linha nova no `log.txt`. Código-fonte: erro do `argparse` no console ("use um número de segundos maior ou igual a 0.1" ou "número inválido: …"), código de saída 2, **sem** pedir UAC. `--interval 0.1` é aceito |
 
 ### 4.4 Sensores (`SEN`) — máquina física
@@ -292,7 +326,7 @@ Formato: **pré-condição → passos → resultado esperado**.
 
 | ID | Caso | Esperado |
 |---|---|---|
-| UI-01 | Layout | Seções Display, Sistema e Opções; título "Fervura"; tamanho fixo |
+| UI-01 | Layout | Seções Display, Sistema e Opções; título "Fervura"; tamanho fixo. Opções: "Iniciar com o Windows", botões Ocultar e Sair e, abaixo, a caixa "Verificar atualizações" (desmarcada por padrão). Sem versão nova, nenhuma linha de aviso nem os botões "Abrir página de download"/"Copiar link"; quando o aviso aparece (`UPD-04`), a janela cresce na altura e os textos não ficam cortados |
 | UI-02 | Atualização | Valores mudam a cada ~1 s sem travar a janela |
 | UI-03 | Fechar no X | Janela some; ícone continua; display continua recebendo |
 | UI-04 | Ocultar | Igual ao UI-03 |
@@ -305,9 +339,9 @@ Formato: **pré-condição → passos → resultado esperado**.
 | ID | Caso | Esperado |
 |---|---|---|
 | TRY-01 | Ícone | Número atual em branco, em negrito (Segoe UI Bold de `C:\Windows\Fonts`), sobre fundo vermelho (conectado) ou cinza (desconectado); `--` sem temperatura ou com erro de leitura dos sensores |
-| TRY-02 | Dica | Passar o mouse: "Fervura: N" + status |
+| TRY-02 | Dica | Passar o mouse: "Fervura: N" + status, em linhas separadas. Com versão nova (`UPD-04`), a linha "Nova versão X.Y.Z disponível" entre as duas; some ao desligar a opção (`UPD-07`) |
 | TRY-03 | Clique esquerdo | Abre/traz a janela para frente |
-| TRY-04 | Menu | Abrir; CPU/GPU/Maior com a atual marcada; Sair |
+| TRY-04 | Menu | Abrir; CPU/GPU/Maior com a atual marcada; Sair. Com versão nova (`UPD-04`), o item "Nova versão X.Y.Z disponível" logo abaixo de Abrir, que abre a página da versão (`UPD-05`); sem versão nova, o item não aparece |
 | TRY-05 | Trocar fonte pelo menu | Número muda; opção correspondente marcada na janela (se aberta) |
 | TRY-06 | Trocar fonte pela janela | Menu da bandeja reflete a nova escolha |
 | TRY-07 | Sair pelo menu | Igual ao UI-05 (processo termina em até ~3 s) |
@@ -321,12 +355,12 @@ Comando **como administrador**; feche o Fervura antes de editar.
 
 | ID | Caso | Esperado |
 |---|---|---|
-| CFG-01 | Persistência | Escolher GPU, sair, abrir: GPU continua selecionada; `C:\ProgramData\Fervura\config.json` com conteúdo equivalente a `{"source": "gpu"}` (UTF-8 sem BOM); entrar com outro usuário do Windows e abrir: também GPU (configuração por máquina) |
+| CFG-01 | Persistência | Escolher GPU, sair, abrir: GPU continua selecionada; `C:\ProgramData\Fervura\config.json` com conteúdo equivalente a `{"source": "gpu", "check_updates": false}` (UTF-8 sem BOM; as duas chaves sempre presentes); entrar com outro usuário do Windows e abrir: também GPU (configuração por máquina) |
 | CFG-02 | Arquivo corrompido ou JSON não-objeto | Escrever lixo no `config.json`; abrir: fonte CPU (padrão), sem erro. Repetir com `[]`, `null`, `"gpu"` e `123`: fonte CPU. Salvar `{"source": "gpu"}` pelo Bloco de Notas como "UTF-8 com BOM": fonte **GPU** (BOM aceito) |
 | CFG-03 | Valor inválido | `{"source": "xyz"}`, `{"source": 1}` e `{"source": ["gpu"]}`; abrir: fonte CPU |
 | CFG-04 | Sem pasta | Como administrador, apagar `C:\ProgramData\Fervura` (e renomear `%APPDATA%\Fervura\config.json`, se existir, para não haver migração); abrir: pasta recriada com `log.txt`; fonte CPU; sem aviso laranja de pasta. `icacls C:\ProgramData\Fervura` mostra só `NT AUTHORITY\SISTEMA:(OI)(CI)(F)`, `BUILTIN\Administradores:(OI)(CI)(F)` e `BUILTIN\Usuários:(OI)(CI)(RX)`, nenhuma com `(I)` (sem herança); `(Get-Acl C:\ProgramData\Fervura).Owner` = `BUILTIN\Administradores`. Desfazer a renomeação depois |
-| CFG-05 | Arquivo aninhado, grande ou com chave desconhecida | (a) `config.json` com 100.000 `[` seguidos: fonte CPU, sem erro. (b) arquivo com mais de 64 KiB (ex.: `{"source": "gpu", "pad": "<70.000 letras x>"}`): fonte CPU. (c) `{"source": "gpu", "extra": 1}`: fonte GPU; depois de trocar a fonte para Maior, o arquivo contém só `source` (`"extra"` sumiu) |
-| CFG-06 | Migração de `%APPDATA%` | Fechar o Fervura; como administrador, apagar `C:\ProgramData\Fervura\config.json`; criar `%APPDATA%\Fervura\config.json` do seu usuário com `{"source": "gpu", "x": 1}`; abrir: fonte GPU; `C:\ProgramData\Fervura\config.json` criado só com `source`; `log.txt` com "settings migrated from …"; o arquivo em `%APPDATA%` continua lá, sem alteração. Abrir de novo com `%APPDATA%` dizendo `max`: continua GPU (o arquivo novo prevalece) |
+| CFG-05 | Arquivo aninhado, grande ou com chave desconhecida | (a) `config.json` com 100.000 `[` seguidos: fonte CPU, sem erro. (b) arquivo com mais de 64 KiB (ex.: `{"source": "gpu", "pad": "<70.000 letras x>"}`): fonte CPU. (c) `{"source": "gpu", "extra": 1}`: fonte GPU; depois de trocar a fonte para Maior, o arquivo contém só `source` e `check_updates` (`"extra"` sumiu) |
+| CFG-06 | Migração de `%APPDATA%` | Fechar o Fervura; como administrador, apagar `C:\ProgramData\Fervura\config.json`; criar `%APPDATA%\Fervura\config.json` do seu usuário com `{"source": "gpu", "check_updates": true, "x": 1}`; abrir: fonte GPU e "Verificar atualizações" **desmarcada** (`check_updates` não é migrado); `C:\ProgramData\Fervura\config.json` criado só com `source` e `"check_updates": false`; `log.txt` com "settings migrated from …"; o arquivo em `%APPDATA%` continua lá, sem alteração. Abrir de novo com `%APPDATA%` dizendo `max`: continua GPU (o arquivo novo prevalece) |
 | CFG-07 | Erro ao salvar | Com o Fervura aberto, num Prompt de Comando como administrador: `attrib +r C:\ProgramData\Fervura\config.json` (o arquivo precisa existir: troque a fonte uma vez antes); trocar a fonte: muda na sessão (display e janela); status com " — configuração não salva: <erro>", mantido nas atualizações seguintes; `log.txt` com "settings not saved: …"; o arquivo não muda. Depois `attrib -r C:\ProgramData\Fervura\config.json` e trocar a fonte de novo: a mensagem some e o arquivo é gravado. (Apagar a pasta inteira com o programa aberto costuma falhar porque o `log.txt` está em uso.) |
 
 ### 4.10 Iniciar com o Windows (`AUT`)
@@ -362,7 +396,8 @@ Executados pela revisão de segurança (agente Luana), não pelos testes de func
 | SEC-02 | PawnIO íntegro | SHA-256 de `third_party\PawnIO\PawnIO_setup.exe` = `1f519a22e47187f70a1379a48ca604981c4fcf694f4e65b734aaa74a9fba3032` (`certutil -hashfile <arquivo> SHA256`), conferido em `build\vendor\pawnio\` e na pasta instalada (`C:\Program Files\Fervura\third_party\PawnIO\`) |
 | SEC-03 | Avisos | `THIRD_PARTY_NOTICES.txt` presente e completo em `build\` e na pasta instalada (`C:\Program Files\Fervura\`) |
 | SEC-04 | Controle de Aplicativo Inteligente ligado | Registrar se o instalador, o programa (pelo menu Iniciar) e a tarefa de autostart abrem. Havendo bloqueio (ex.: erro 4551), registrar os eventos 3033/3077 de *CodeIntegrity → Operational* (arquivo bloqueado e política, ex.: `0283ac0f-fff1-49ae-ada1-8a933130cad6`). Problema conhecido de executável sem assinatura (seção 5), não reprova a versão |
-| SEC-05 | Dependências do pacote | Em `dist\Fervura\_internal` (e em `C:\Program Files\Fervura\_internal`): Pillow ≥ 13 (pasta `pillow-<versão>.dist-info` ou `.venv-build\Scripts\pip show Pillow`); **nenhuma** pasta ou arquivo `setuptools*` nem `pkg_resources*` |
+| SEC-05 | Dependências do pacote | Em `dist\Fervura\_internal` (e em `C:\Program Files\Fervura\_internal`): Pillow ≥ 13 (pasta `pillow-<versão>.dist-info` ou `.venv-build\Scripts\pip show Pillow`); **nenhuma** pasta ou arquivo `setuptools*` nem `pkg_resources*`. Na pasta instalada, conferir depois de reinstalar a versão testada: uma instalação antiga pode ainda ter `_internal\setuptools` |
+| SEC-06 | Navegador aberto sem elevação | (a) `Fervura.exe` instalado, aberto pelo menu Iniciar (elevado), com o aviso de versão nova visível (`UPD-04`); fechar antes todas as janelas do navegador padrão (com o navegador já aberto, a página só vira uma aba do processo existente e o teste não conclui nada). Clicar "Abrir página de download"; repetir pelo item do menu da bandeja. Conferir no Gerenciador de Tarefas → *Detalhes* a coluna *Elevado* do navegador e, no PowerShell (2.2), o processo pai. (b) **Altera o sistema: só com autorização explícita do usuário.** Com o Explorer da área de trabalho elevado ou o UAC desligado, repetir | (a) O navegador abre na página da versão com *Elevado* = **Não**, e o processo pai é o `explorer.exe` da área de trabalho, não o `Fervura.exe`. (b) **Nada abre**; a linha passa a "Nova versão X.Y.Z disponível — não foi possível abrir o navegador; use Copiar link"; `log.txt` com "could not open <url>: o Explorer da área de trabalho está elevado; o navegador também ficaria" (ou outro motivo); em nenhum caso surge um navegador elevado |
 
 ### 4.13 Identificação e compatibilidade do display (`CMP`)
 
@@ -414,6 +449,27 @@ apagando como administrador o que foi criado e abrindo o Fervura de novo (a past
 | DAD-07 | Variáveis de ambiente do usuário alteradas | **Altera o registro: só com autorização explícita do usuário.** Na conta de teste, em `HKCU\Environment`, criar `SystemDrive` = `C:\Users\<usuário>\x` e `ProgramData` = `C:\Users\<usuário>\x\ProgramData` (pasta criada antes); sair e entrar na conta; abrir o Fervura pelo menu Iniciar (UAC); trocar a fonte; com autostart ligado, sair e entrar na conta | Log e `config.json` continuam em `C:\ProgramData\Fervura` (aberto pelo UAC e pela tarefa agendada); nada criado em `C:\Users\<usuário>\x`; sem aviso laranja de pasta. Desfazer: apagar os dois valores de `HKCU\Environment` e sair/entrar na conta |
 | DAD-08 | Pasta existente com permissões alteradas é reparada | Com o Fervura fechado, como administrador: `icacls C:\ProgramData\Fervura /inheritance:e` (reativa herança); abrir o Fervura | Modo normal; `icacls C:\ProgramData\Fervura` volta ao estado do `CFG-04` (sem `(I)`, só SISTEMA, Administradores e Usuários) |
 
+### 4.15 Aviso de atualização (`UPD`)
+
+Comportamento da `specification.md` 7.5. O repositório consultado é o de `UPDATE_REPO`
+(`fervura/updates.py`). Enquanto ele não tiver release publicada, a API responde 404: só
+`UPD-01`, `UPD-02`, `UPD-03`, `UPD-08`, `UPD-09` e `UPD-10` podem ser feitos; `UPD-04` a `UPD-07`
+e `SEC-06` precisam de uma release com tag maior que a versão instalada (ex.: `v1.0.1` com a
+1.0.0 instalada). A conferência de que o navegador abre sem elevação está em `SEC-06`.
+
+| ID | Caso | Passos | Esperado |
+|---|---|---|---|
+| UPD-01 | Desligada por padrão, sem conexão | Instalação nova (ou `config.json` sem `check_updates`); abrir o Fervura; observar a rede (2.2) por pelo menos 2 minutos | Caixa "Verificar atualizações" desmarcada; **nenhuma** conexão de `Fervura.exe` no Monitor de Recursos / `netstat -b`; `log.txt` sem linhas "update check"; nenhum aviso de versão nova |
+| UPD-02 | Ligar sem release no repositório | Repositório sem release (ou inexistente); marcar "Verificar atualizações"; esperar ~1 minuto; desmarcar e marcar de novo | Uma conexão a `api.github.com` logo ao marcar; `log.txt` com **uma** linha "update check failed: HTTP 404", sem repetição ao religar; nada aparece na janela nem na bandeja; `config.json` com `"check_updates": true` |
+| UPD-03 | Ligada desde o início | Com a opção marcada, sair e abrir o Fervura | A primeira verificação acontece cerca de 30 s depois da linha "Fervura <versão> iniciando", e não antes: a conexão aparece no Monitor de Recursos e o `log.txt` ganha nesse momento a linha do resultado ("update check failed: HTTP 404", "no update available (current X.Y.Z)" ou "update available: …") |
+| UPD-04 | Aviso de versão nova | Release com tag maior que a versão instalada; marcar a opção (ou abrir com ela marcada e esperar ~30 s) | Linha azul "Nova versão X.Y.Z disponível" sob as opções, com os botões "Abrir página de download" e "Copiar link"; dica da bandeja com a linha da versão (`TRY-02`); item no menu da bandeja (`TRY-04`); `log.txt` com **uma** linha "update available: X.Y.Z (https://github.com/<UPDATE_REPO>/releases/…)". Nada é baixado: nenhum arquivo novo em `%TEMP%`, `Downloads` ou na pasta do programa |
+| UPD-05 | Abrir a página | Com o aviso visível, clicar "Abrir página de download"; depois usar o item "Nova versão X.Y.Z disponível" do menu da bandeja | O navegador padrão abre a página da release no GitHub (`https://github.com/<UPDATE_REPO>/releases/...`), sem travar a janela; nada é executado além do navegador. Elevação conferida no `SEC-06` |
+| UPD-06 | Falha ao abrir → "use Copiar link" | Com o aviso visível, encerrar o Windows Explorer (Gerenciador de Tarefas → *Processos* → *Windows Explorer* → *Finalizar tarefa*); clicar "Abrir página de download"; clicar "Copiar link" e colar no Bloco de Notas. Restaurar o Explorer depois (*Executar nova tarefa* → `explorer.exe`, **sem** marcar "Criar esta tarefa com privilégios administrativos") | Nada abre; a linha passa a "Nova versão X.Y.Z disponível — não foi possível abrir o navegador; use Copiar link" e a janela é exibida; `log.txt` com "could not open <url>: <erro>"; o texto colado é a URL da página da release |
+| UPD-07 | Desligar esconde e persiste | Com o aviso visível, desmarcar "Verificar atualizações"; sair e abrir de novo | Ao desmarcar, a linha e os botões somem, o item some do menu da bandeja e a dica perde a linha da versão; `config.json` com `"check_updates": false`; ao reabrir, caixa desmarcada, sem aviso e sem conexão (como `UPD-01`) |
+| UPD-08 | Sem rede | Desligar a rede (Wi-Fi/cabo); marcar a opção; esperar ~1 minuto; religar a rede; desmarcar e marcar de novo depois de mais de 60 s | Sem mensagem na janela; `log.txt` com **uma** linha "update check failed: <motivo>"; depois de religar e remarcar, "update check working again" e o resultado ("no update available (current X.Y.Z)", "update available: …" ou outra falha, como o HTTP 404 do `UPD-02`) |
+| UPD-09 | Valor não booleano no arquivo | Fechar o Fervura; como administrador, gravar `{"source": "gpu", "check_updates": 1}` no `config.json`; abrir; repetir com `"true"` e `null`; depois trocar a fonte | Fonte GPU; caixa desmarcada e nenhuma conexão (como `UPD-01`); depois da troca de fonte, o arquivo tem `"check_updates": false`. Com `true` (JSON), a caixa abre marcada |
+| UPD-10 | Modo seguro | No cenário do `DAD-02`, marcar "Verificar atualizações"; sair e reabrir | A caixa marca e vale na sessão (conexão a `api.github.com` no Monitor de Recursos); nada gravado na pasta plantada; ao reabrir, caixa desmarcada |
+
 ---
 
 ## 5. Problemas conhecidos (não são falhas de teste)
@@ -431,6 +487,10 @@ apagando como administrador o que foi criado e abrindo o Fervura de novo (a past
 - A configuração é por máquina: trocar a fonte numa conta muda também para as outras contas.
 - Em VM, a temperatura da CPU e o display não funcionam (ver 2.1).
 - O instalador do PawnIO pode ou não mostrar janela própria (registrar no INS-04).
+- Enquanto o repositório de `UPDATE_REPO` não tiver release, a verificação de atualizações
+  registra "update check failed: HTTP 404" no log (`UPD-02`). Não é falha.
+- Com o Explorer da área de trabalho elevado ou o UAC desligado, "Abrir página de download" não
+  abre nada, de propósito: use "Copiar link" (`SEC-06`).
 
 ---
 

@@ -2,7 +2,11 @@
 ; Gerado por build.bat depois do PyInstaller; os caminhos são relativos a esta pasta.
 
 #define AppName "Fervura"
-#define AppVersion "1.0.0"
+; Versão: fonte única em fervura\__init__.py (__version__); o build.bat a passa com
+; /DAppVersion=X.Y.Z. O valor abaixo só vale compilando este script à mão.
+#ifndef AppVersion
+  #define AppVersion "0.0.0-dev"
+#endif
 #define AppExe "Fervura.exe"
 #define PawnIOVersion "2.2.0"
 

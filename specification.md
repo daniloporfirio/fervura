@@ -17,7 +17,9 @@ O Fervura controla um **display USB de temperatura de dois dígitos**. Ele:
 
 1. lê a temperatura da CPU e da GPU;
 2. envia um número de 0 a 99 ao display pela porta serial;
-3. fica na bandeja do sistema, com uma janela opcional que mostra informações do computador.
+3. fica na bandeja do sistema, com uma janela opcional que mostra informações do computador;
+4. opcionalmente (desligado por padrão), avisa quando há uma versão nova no GitHub Releases,
+   sem baixar nem executar nada (seção 7.5).
 
 ### Fatos sobre o hardware
 
@@ -57,6 +59,7 @@ aparelho real. Não mudam sem novo teste.
 | Sensores | `LibreHardwareMonitorLib` 0.9.6 via `pythonnet` (.NET Framework 4.7.2+) | Temperaturas, dados da GPU |
 | Sensores (complemento) | `psutil` | Uso e clock da CPU, uso de RAM |
 | Driver | PawnIO 2.2.0 (instalador oficial, de terceiros) | Acesso de baixo nível para a temperatura da CPU |
+| Aviso de atualização | `urllib` e `ssl` (biblioteca padrão); COM do Explorer via `ctypes` | Consulta opcional ao GitHub Releases e abertura da página sem elevação (7.5). Nenhuma dependência nova |
 | Empacotamento | PyInstaller (pasta única, `--windowed`, `--uac-admin`) | `Fervura.exe` sem exigir Python |
 | Instalador | Inno Setup 6 | `Fervura-Setup-<versão>.exe` |
 
@@ -66,6 +69,8 @@ aparelho real. Não mudam sem novo teste.
 fervura/
 ├── iniciar.pyw              ponto de entrada (código-fonte e PyInstaller)
 ├── fervura/
+│   ├── __init__.py          __version__: fonte única da versão (programa, log, User-Agent,
+│   │                        comparação de versões e instalador)
 │   ├── __main__.py          permite "python -m fervura"
 │   ├── app.py               inicialização, Sender (thread), App (janela), regras de exibição
 │   ├── protocol.py          pacote serial de 23 bytes
@@ -76,6 +81,8 @@ fervura/
 │   │                        variáveis de ambiente
 │   ├── datadir.py           pasta de dados protegida (%ProgramData%\Fervura) e checagem de links
 │   ├── settings.py          config.json, migração e tarefa agendada de inicialização
+│   ├── updates.py           verificação de atualizações no GitHub Releases (thread, só aviso)
+│   ├── shellexec.py         abre a página da versão nova sem elevação, pelo Explorer (COM)
 │   └── tray.py              ícone e menu da bandeja
 ├── tests/                   testes automatizados (unittest)
 ├── tools/prepare_build.py   baixa dependências nativas e gera listas do instalador
@@ -401,9 +408,16 @@ Título "Fervura", tamanho fixo. Fechar no **X oculta** a janela; o programa con
        "A pasta %ProgramData%\Fervura não pôde ser protegida: a configuração não é salva e não há log.txt."
 3. **Opções**
    - caixa **Iniciar com o Windows** (seção 9);
-   - botões **Ocultar** e **Sair**.
+   - botões **Ocultar** e **Sair**;
+   - caixa **Verificar atualizações** (7.5), desmarcada por padrão;
+   - **aviso de versão nova**, oculto até a verificação encontrar uma versão maior: linha azul
+     "Nova versão X.Y.Z disponível" com os botões **Abrir página de download** e **Copiar link**.
+     Se a página não puder ser aberta (7.5.5), a linha passa a
+     "Nova versão X.Y.Z disponível — não foi possível abrir o navegador; use Copiar link" e a
+     janela é exibida. Desmarcar a caixa esconde o aviso.
 
-A interface consulta as filas a cada 200 ms e mostra só o `Update` mais recente.
+A interface consulta as filas a cada 200 ms e mostra só o `Update` mais recente, e também o
+resultado mais recente da verificação de atualizações (ignorado se a opção estiver desligada).
 Em caso de erro ao mudar a inicialização automática, a mensagem aparece no status e a caixa
 volta ao estado real.
 
@@ -417,10 +431,14 @@ volta ao estado real.
     (`<GetSystemWindowsDirectoryW>\Fonts`, seção 7.3.4): `segoeuib.ttf`, depois `arialbd.ttf`.
     Se nenhuma abrir, ou se a pasta do Windows não for obtida, usa a fonte padrão do Pillow.
     Nunca por nome solto: com nome solto o Pillow procura primeiro na pasta atual.
-- **Dica (tooltip):** `Fervura: <valor>` + status, limitada a 127 caracteres.
+- **Dica (tooltip):** linhas `Fervura: <valor>` (ou `--`), "Nova versão X.Y.Z disponível"
+  (só quando há versão nova, 7.5) e o status, limitada a 127 caracteres. É atualizada a cada
+  ciclo do `Sender`.
 - **Clique esquerdo:** abre a janela (item padrão "Abrir").
 - **Menu (clique direito):**
   - Abrir;
+  - "Nova versão X.Y.Z disponível", visível só quando há versão nova; abre a página da versão
+    (mesmo efeito do botão "Abrir página de download", 7.5.5);
   - as três fontes, como opções exclusivas, com a atual marcada;
   - Sair.
 - Ações do menu rodam na thread da bandeja e são repassadas à interface por uma fila de eventos;
@@ -434,7 +452,7 @@ código-fonte (`fervura/datadir.py`).
 
 | Arquivo | Conteúdo |
 |---|---|
-| `config.json` | Fonte escolhida (7.3.1) |
+| `config.json` | Fonte escolhida e opção "Verificar atualizações" (7.3.1) |
 | `log.txt`, `log.txt.1` a `log.txt.3` | Log atual e cópias rotacionadas (7.3.3) |
 | `autostart-task.xml` | Temporário: existe só durante a ativação da tarefa agendada (seção 9) |
 
@@ -446,21 +464,31 @@ redirecionar as gravações, renomeações e exclusões feitas pelo processo ele
 
 ```json
 {
-  "source": "cpu"
+  "source": "cpu",
+  "check_updates": false
 }
 ```
 
-- **Por máquina:** todos os usuários do computador usam a mesma fonte.
-- Salvo a cada troca de fonte, pela janela ou pelo menu da bandeja, em UTF-8 sem BOM.
-- **Só a chave `source` é lida e gravada.** Chaves desconhecidas são descartadas e não voltam
-  ao arquivo no próximo salvamento.
-- Volta ao padrão `cpu` quando: o arquivo não existe; tem mais de 64 KiB (`MAX_CONFIG_BYTES`);
-  o JSON é inválido ou aninhado demais; o JSON é válido mas não é um objeto (`[]`, `null`,
-  `"cpu"`, `123`); `source` não é texto ou não é `cpu`, `gpu` ou `max`; o arquivo é link ou
-  hard link (7.3.5). Arquivo com BOM UTF-8 (ex.: salvo pelo Bloco de Notas) é aceito.
+- **Por máquina:** todos os usuários do computador usam a mesma fonte e a mesma opção de
+  verificação de atualizações.
+- Salvo a cada troca de fonte (pela janela ou pelo menu da bandeja) e a cada mudança da caixa
+  "Verificar atualizações", em UTF-8 sem BOM. O arquivo gravado sempre tem as duas chaves.
+- **Só as chaves `source` e `check_updates` são lidas e gravadas.** Chaves desconhecidas são
+  descartadas e não voltam ao arquivo no próximo salvamento.
+- **`check_updates` é booleano estrito:** só o JSON `true` liga a opção. Ausente ou com qualquer
+  outro valor (`1`, `"true"`, `null`, lista, objeto) vale `false`, e é gravado como `false` no
+  próximo salvamento.
+- O arquivo inteiro volta ao padrão (`source` = `cpu`, `check_updates` = `false`) quando: não
+  existe; tem mais de 64 KiB (`MAX_CONFIG_BYTES`); o JSON é inválido ou aninhado demais; o JSON
+  é válido mas não é um objeto (`[]`, `null`, `"cpu"`, `123`); o arquivo é link ou hard link
+  (7.3.5). `source` que não seja texto ou não seja `cpu`, `gpu` ou `max` vale `cpu`, sem afetar
+  `check_updates`. Arquivo com BOM UTF-8 (ex.: salvo pelo Bloco de Notas) é aceito.
+- Ao gravar, cada chave é validada da mesma forma: um `source` inválido (inclusive de tipo não
+  comparável, como uma lista) é gravado como `cpu`, sem exceção.
 - Arquivo que seja link ou hard link também não é gravado: o log registra
   `settings not saved: <arquivo> is a link or hard link`, sem mensagem na janela.
-- **Erro ao gravar** (ex.: pasta apagada com o programa aberto): a fonte nova vale na sessão,
+- **Erro ao gravar** (ex.: pasta apagada com o programa aberto): a fonte nova (ou a nova
+  escolha de "Verificar atualizações") vale na sessão,
   o log registra `settings not saved: <erro>` e a linha de status mostra
   "configuração não salva: <erro>" até um salvamento dar certo (6.3).
 - Usuários comuns só leem a pasta: editar o arquivo à mão exige administrador.
@@ -473,8 +501,11 @@ Na partida, se a pasta de dados é segura e `config.json` ainda não existe nela
 - lê o arquivo antigo **do usuário que executa** (caminho montado com `%APPDATA%` do ambiente
   do processo; sem a variável, `<pasta pessoal>\Fervura\config.json`), com as mesmas regras de
   7.3.1 (tamanho, JSON, link/hard link);
-- se houver `source` válido, grava só essa chave no arquivo novo e registra
-  `settings migrated from <arquivo>`; arquivo antigo inválido ou ausente não grava nada;
+- se houver `source` válido, copia só essa chave para o arquivo novo (gravado com
+  `"check_updates": false`) e registra `settings migrated from <arquivo>`; arquivo antigo
+  inválido ou ausente não grava nada;
+- **`check_updates` não é migrado:** começa `false` mesmo que o arquivo antigo diga `true`
+  (a verificação é opt-in, 7.5);
 - falha ao gravar registra `settings not migrated: <erro>` e o programa inicia normalmente;
 - **nada em `%APPDATA%` é apagado ou renomeado** (uma exclusão elevada numa pasta controlada pelo
   usuário poderia ser redirecionada); os arquivos antigos continuam lá.
@@ -568,8 +599,9 @@ Quando a pasta é recusada ou o caminho não é resolvido, nada é gravado em di
 
 - o log registra `data folder not used (<motivo>): no log file, settings not saved`, apenas no
   console (no executável, em lugar nenhum);
-- `config.json` não é lido nem gravado e não há migração: a fonte começa em `cpu`; uma troca vale
-  só na sessão (no log, `settings not saved: data folder unavailable`), sem mensagem na janela;
+- `config.json` não é lido nem gravado e não há migração: a fonte começa em `cpu` e
+  "Verificar atualizações" desmarcada; uma troca vale só na sessão (no log,
+  `settings not saved: data folder unavailable`), sem mensagem na janela;
 - "Iniciar com o Windows" não ativa: status
   "não foi possível alterar a inicialização: pasta de dados protegida indisponível (<caminho>); veja o log"
   e a caixa volta ao estado real. Desativar continua funcionando;
@@ -602,6 +634,125 @@ O ícone em uso continua o da seção 7.2 (e o mesmo desenho no `.exe` e no inst
    `icon_proposal.tray_icon`;
 3. atualizar esta seção, a 7.2 e os casos `BLD-09` e `TRY-01` do guia de testes.
 
+### 7.5 Aviso de atualização (`updates.py`, `shellexec.py`)
+
+**Etapa 1: só aviso.** O Fervura consulta a última versão publicada no GitHub Releases e, se ela
+for maior que a atual, mostra o aviso na janela e na bandeja. **Nada é baixado nem executado**:
+a instalação continua manual, pela página da versão. A instalação automática (etapa 2) não
+existe e só será considerada depois de haver assinatura de código (seção 15).
+
+#### 7.5.1 Opção e agenda
+
+- Caixa **Verificar atualizações** (7.1), **desligada por padrão (opt-in)**, salva em
+  `config.json` como `check_updates` (7.3.1). Em modo seguro vale só na sessão (7.3.6).
+- **Desligada:** nenhuma requisição é feita; a thread espera sem prazo até a opção mudar.
+- **Ligada desde o início do programa:** primeira verificação 30 s depois de abrir
+  (`FIRST_CHECK_DELAY`), depois a cada 24 h (`CHECK_INTERVAL`) enquanto o programa estiver aberto.
+- **Ao marcar a caixa:** verifica na hora. Desmarcar e marcar de novo não repete a requisição
+  antes de 60 s da anterior (`MIN_CHECK_SPACING`).
+- **Sem retentativa:** uma falha só tenta de novo no próximo horário agendado.
+- `UpdateChecker` é uma thread *daemon* (`update-check`), que acorda pelo menos a cada 60 s para
+  olhar o relógio enquanto a opção está ligada. É criada no passo 9 da inicialização, iniciada
+  no passo 11 e parada ao Sair (seção 8), sem espera pelo seu término.
+
+#### 7.5.2 Repositório (`UPDATE_REPO`)
+
+`UPDATE_REPO = "daniloporfirio/fervura"` (em `updates.py`). Dela derivam:
+
+| Constante | Valor |
+|---|---|
+| `API_URL` | `https://api.github.com/repos/<UPDATE_REPO>/releases/latest` |
+| `RELEASES_URL` | `https://github.com/<UPDATE_REPO>/releases/` |
+| `LATEST_PAGE_URL` | `https://github.com/<UPDATE_REPO>/releases/latest` |
+
+A grafia, toda em minúsculas, é a do repositório no GitHub (remote
+`https://github.com/daniloporfirio/fervura.git`), confirmada pelo usuário. Ela importa porque a
+validação do `html_url` diferencia maiúsculas (7.5.4). Se o repositório mudar de nome, basta
+alterar a constante.
+
+#### 7.5.3 Requisição
+
+- `GET` em `API_URL`, timeout de 10 s (`TIMEOUT`) por operação de rede.
+- Cabeçalhos, e só estes: `User-Agent: Fervura/<versão>`, `Accept: application/vnd.github+json`
+  e `X-GitHub-Api-Version: 2022-11-28`. Nenhum dado do usuário ou da máquina.
+- **TLS:** certificado e nome do host sempre verificados, TLS 1.2 ou mais novo. No Windows, os
+  certificados confiáveis vêm do repositório de certificados do Windows (lojas `ROOT` e `CA`, via
+  `ssl.enum_certificates`, só os marcados para autenticação de servidor), que inclui os do
+  usuário atual, e não só os da máquina. `SSL_CERT_FILE`/`SSL_CERT_DIR` são ignorados (o contexto
+  padrão do Python os aceitaria). Falha ao ler uma loja registra
+  `could not read the <loja> certificate store: <erro>`. Fora do Windows, contexto padrão do Python.
+- **Redirecionamento:** só é seguido se o destino começar com `https://api.github.com/`; outro
+  destino conta como falha.
+- **Proxy:** o do ambiente ou do registro do usuário, como o `urllib` faz por padrão (seção 13).
+- Status diferente de 200 é falha (`unexpected HTTP status <N>`). Lê no máximo 1 MiB + 1 byte
+  (`MAX_RESPONSE_BYTES`); acima de 1 MiB a resposta é recusada (`response larger than 1 MiB`).
+
+#### 7.5.4 Resposta
+
+- JSON inválido, aninhado demais ou que não seja objeto = falha.
+- Só `tag_name` e `html_url` são usados.
+- `draft` ou `prerelease` diferentes de `false` (quando presentes): a release é ignorada
+  (sem atualização).
+- **Tag:** só `vX.Y.Z` ou `X.Y.Z`, exatamente três partes, dígitos ASCII, até 9 dígitos por parte
+  (`system.MAX_VERSION_DIGITS`). Sufixos (`-beta`, `-rc1`), `V` maiúsculo, quatro partes, espaços,
+  dígitos de outros alfabetos ou tipo não texto = sem atualização. Regra diferente da leitura
+  da versão do PawnIO (10.1).
+- **Comparação numérica** com `__version__` (1.10.0 > 1.9.0). Só uma versão **maior** que a atual
+  gera aviso.
+- **Página da versão:** `html_url` só é aceito se começar exatamente com `RELEASES_URL` (com
+  diferenciação de maiúsculas), tiver até 2048 caracteres, o restante só com `[A-Za-z0-9._~+/-]`
+  (sem `%`, `?`, `#`, `&`, espaços, aspas ou `\`) e nenhum segmento `..`. Senão, ou se faltar, a
+  página usada é `LATEST_PAGE_URL`.
+
+#### 7.5.5 Aviso e abertura da página
+
+- **Resultado:** cada verificação bem-sucedida publica a versão nova ou "nenhuma". Com versão
+  nova, aparecem a linha azul e os botões na janela (7.1), a linha na dica e o item no menu da
+  bandeja (7.2). Uma verificação posterior sem versão nova esconde o aviso; uma falha mantém o
+  que estava.
+- **Desligar a opção** esconde o aviso. Um resultado que chegue depois de desligar é ignorado.
+- **Abrir página de download** (botão ou item do menu da bandeja): abre a página da versão no
+  navegador do usuário **sem elevação** (`shellexec.open_url`), numa thread curta própria (COM
+  STA), para não travar a janela:
+  1. a URL é validada de novo (`is_safe_url`: só `https://` com `[A-Za-z0-9._~/+:?=&#-]`, até
+     2048 caracteres); recusada = nada é executado;
+  2. `CoCreateInstance(ShellWindows, CLSCTX_LOCAL_SERVER)`: o objeto nunca é criado dentro do
+     processo elevado, só no Explorer;
+  3. `FindWindowSW(CSIDL_DESKTOP, SWC_DESKTOP, SWFO_NEEDDISPATCH)`: janela da área de trabalho;
+  4. o processo dono dessa janela passa por `OpenProcessToken` + `TokenElevation`. **Elevado, ou
+     impossível saber, = nada é aberto;**
+  5. `IServiceProvider::QueryService(SID_STopLevelBrowser, IID_IShellBrowser)` →
+     `QueryActiveShellView` → `IShellView::GetItemObject(SVGIO_BACKGROUND, IID_IDispatch)` →
+     propriedade `Application` → `IShellDispatch2` → `ShellExecute(url, "", "", "open",
+     SW_SHOWNORMAL)` (as duas últimas por nome, via `IDispatch::Invoke`).
+- **Sem alternativa elevada:** se qualquer etapa falhar, nada é aberto. `webbrowser`,
+  `os.startfile`, `ShellExecuteW` e `explorer.exe` nunca são usados (herdariam o token elevado).
+  O log registra `could not open <url>: <erro>`, a linha do aviso passa a
+  "Nova versão X.Y.Z disponível — não foi possível abrir o navegador; use Copiar link" e a
+  janela é exibida. Erros possíveis: "endereço recusado",
+  "área de trabalho do Windows (Explorer) não encontrada",
+  "o Explorer da área de trabalho está elevado; o navegador também ficaria",
+  "Shell.Application indisponível", ou o erro do COM.
+- **Copiar link:** coloca a URL da página na área de transferência (Tk). Funciona sempre.
+
+#### 7.5.6 Falhas e log
+
+Falhas (HTTP 404 enquanto o repositório não tiver release, 403 por limite de taxa, 5xx, rede,
+timeout, TLS, JSON inválido) **não aparecem para o usuário** e nunca derrubam a thread. O log
+segue a regra de "uma vez por estado" da conexão com o display (4.2):
+
+| Situação | Linha no log |
+|---|---|
+| Erro HTTP | `update check failed: HTTP <código>` (WARNING) |
+| Erro de rede do `urllib` | `update check failed: <motivo>` (WARNING) |
+| Outra falha (timeout, TLS, resposta inválida) | `update check failed: <erro>` (WARNING) |
+| Primeiro sucesso depois de uma falha | `update check working again` (INFO) |
+| Versão nova | `update available: X.Y.Z (<url>)` (INFO) |
+| Sem versão nova | `no update available (current X.Y.Z)` (INFO) |
+
+A mesma falha repetida não gera nova linha; uma falha diferente ou um sucesso zera o estado. O
+resultado (versão nova ou não) também só é registrado quando muda.
+
 ---
 
 ## 8. Inicialização do programa (`main`)
@@ -613,7 +764,9 @@ Ordem obrigatória:
    log, Tk ou elevação. No executável, que não tem console, a saída é silenciosa.
 2. **Pasta de dados:** prepara `%ProgramData%\Fervura` (7.3.5). Recusada = modo seguro (7.3.6).
 3. Configura o log (arquivo só se a pasta for segura, 7.3.3) e registra
-   `iniciando; administrador=<True/False>`; depois, se for o caso, o motivo de não usar a pasta
+   `Fervura <versão> iniciando; administrador=<True/False>` (ex.:
+   `Fervura 1.0.0 iniciando; administrador=True`; versão de `fervura/__init__.py`); depois, se
+   for o caso, o motivo de não usar a pasta
    ou o arquivo de log.
 4. Cria a raiz Tk **oculta**: os diálogos aparecem antes da janela.
 5. **Administrador:**
@@ -632,12 +785,14 @@ Ordem obrigatória:
    - instalador não encontrado: "Instalador do PawnIO não encontrado… Reinstale o Fervura." e sai;
    - driver continua ausente depois: "O driver PawnIO não foi instalado. Não é possível continuar." e sai.
 8. **Sensores:** inicializa o `SensorHub`. Falha: "Não foi possível carregar a leitura de sensores: <erro>" e sai.
-9. Migra a configuração antiga, se for o caso (7.3.2); carrega `config.json`; cria o `Sender` e a janela.
+9. Migra a configuração antiga, se for o caso (7.3.2); carrega `config.json`; cria o `Sender`,
+   o `UpdateChecker` (ligado ou não conforme `check_updates`, 7.5.1) e a janela.
 10. Mostra a janela, a menos que `--minimized`.
-11. Inicia a bandeja (thread própria), o `Sender` e o laço da interface.
+11. Inicia a bandeja (thread própria), o `Sender`, o `UpdateChecker` e o laço da interface.
 
-**Sair** (janela ou bandeja): sinaliza a parada do `Sender`, remove o ícone da bandeja e fecha a
-janela. Ao terminar o laço da interface, o programa espera o `Sender` terminar por **até 3 s**
+**Sair** (janela ou bandeja): sinaliza a parada do `Sender` e do `UpdateChecker`, remove o ícone
+da bandeja e fecha a janela. O `UpdateChecker` não é esperado: é *daemon* e não impede o fim do
+processo, mesmo no meio de uma requisição. Ao terminar o laço da interface, o programa espera o `Sender` terminar por **até 3 s**
 (`SHUTDOWN_TIMEOUT`). Ao terminar, o `Sender` fecha a porta serial e chama `SensorHub.close()`
 (que chama `Computer.Close()`), em `try/finally`: o segundo roda mesmo se o primeiro falhar. Se
 o `Sender` estiver travado, registra `sender did not stop within 3 s; exiting anyway` e sai
@@ -708,6 +863,9 @@ Leitura da versão (`parse_version`), até três partes separadas por ponto:
 Exemplos: `2`, `2.0`, `2.0.0-beta` e `2.2.0` são aceitos; `1.9.9` é recusado (antigo). A
 consulta (`pawnio_version`) nunca lança exceção: valor estranho no registro = PawnIO ausente.
 
+O limite de 9 dígitos (`MAX_VERSION_DIGITS`) também vale para a tag das releases (7.5.4), mas lá
+a regra é mais estrita: exatamente três partes, sem sufixo.
+
 ### 10.2 Instalação do PawnIO
 
 - Instalador: `PawnIO_setup.exe` oficial **sem modificações**, de namazso (https://pawnio.eu),
@@ -742,6 +900,7 @@ variáveis de ambiente (7.3.4 e seção 9). A exceção é o caminho da configur
 |---|---|
 | Ferramenta | Inno Setup 6, idioma Português (Brasil) |
 | AppId | `{49026729-6B1B-48E0-BE60-D5E0C6352593}`. **Não mudar entre versões**: identifica o produto para atualizações e desinstalação |
+| Versão (`AppVersion`) | Recebida do `build.bat` por `/DAppVersion=X.Y.Z`, lida de `__version__` em `fervura/__init__.py` (seção 12). O `.iss` não guarda a versão: `#ifndef AppVersion` define o padrão `0.0.0-dev`, que só vale compilando o script à mão sem `/D` |
 | Privilégios | administrador |
 | Arquitetura | somente x64 |
 | Windows mínimo | 10 versão 1809 (build 17763), exigência do PawnIO |
@@ -796,7 +955,9 @@ Executado no Windows. Detalhes em `BUILD.md`.
    - `requirements-build.txt` (só build): `pyinstaller>=6.10`, `setuptools>=84.1.0`. O
      `setuptools` serve apenas ao ambiente de build e não entra no executável.
 3. Roda os testes automatizados (`tests\test_protocol.py`, `tests\test_app.py`,
-   `tests\test_datadir.py`); uma falha interrompe o build.
+   `tests\test_datadir.py`, `tests\test_updates.py`); uma falha interrompe o build. Um teste
+   (`SingleVersionTest.test_build_runs_every_test_file`) confere que a linha inclui todos os
+   `tests\test_*.py`.
 4. `prepare_build.py`:
    1. **LibreHardwareMonitorLib 0.9.6** do nuget.org, com todas as dependências transitivas.
       Regras:
@@ -816,8 +977,20 @@ Executado no Windows. Detalhes em `BUILD.md`.
    - `--collect-all pythonnet` e `--collect-all clr_loader`;
    - `--exclude-module setuptools`: o `setuptools` do ambiente de build não é empacotado. O
      resultado esperado (conferido no `SEC-05` do guia) é nenhum `setuptools` nem
-     `pkg_resources` em `dist\Fervura\_internal`.
-6. Inno Setup (`ISCC.exe`, procurado no PATH e nas pastas padrão).
+     `pkg_resources` em `dist\Fervura\_internal`;
+   - os módulos `fervura.updates` e `fervura.shellexec`, com `ssl`, `urllib.request` e
+     `http.client`, entram no pacote pelos imports normais (`_ssl.pyd` e `libssl-3.dll` em
+     `_internal`); nenhuma opção nova do PyInstaller.
+6. Inno Setup (`ISCC.exe`, procurado no PATH e nas pastas padrão):
+   1. lê `fervura.__version__` com o Python do `.venv-build` e confere o formato `X.Y.Z` (só
+      dígitos e pontos). Inválida ou ausente: para com
+      "Versao invalida ou ausente em fervura\__init__.py: use __version__ = "X.Y.Z"";
+   2. imprime `Versao: X.Y.Z`;
+   3. executa `"%ISCC%" /DAppVersion=X.Y.Z installer\Fervura.iss`.
+
+**Mudar a versão:** edite só `__version__` em `fervura/__init__.py`. Ela vale para o log de
+início, o `User-Agent`, a comparação com as releases (7.5) e o instalador (nome do arquivo e
+versão do produto). O `Fervura.exe` não tem recurso de versão (seção 15).
 
 **Atualizar dependências nativas:** mude `LHM_VERSION`, `PAWNIO_VERSION`, `PAWNIO_URL` e
 `PAWNIO_SHA256` em `prepare_build.py`, e `PawnIOVersion` no `.iss`. Atualize a LHM e o PawnIO
@@ -843,12 +1016,43 @@ juntos: os módulos do PawnIO vêm embutidos na LHM.
   Windows pelo kernel), Fonts e o usuário da tarefa agendada (token do processo) não dependem
   do ambiente que o processo elevado herda do usuário (7.3.4, seção 9). Fonte da bandeja
   carregada por caminho absoluto, nunca da pasta atual.
-- **Entrada não confiável limitada:** `config.json` com no máximo 64 KiB, só a chave `source`;
-  JSON aninhado demais vira padrão. Versão do PawnIO lida só com dígitos ASCII, até 9 por
-  parte, sem exceção.
+- **Entrada não confiável limitada:** `config.json` com no máximo 64 KiB, só as chaves `source`
+  e `check_updates` (booleano estrito); JSON aninhado demais vira padrão. Versão do PawnIO lida
+  só com dígitos ASCII, até 9 por parte, sem exceção. Resposta do GitHub limitada a 1 MiB, só
+  `tag_name` (formato estrito) e `html_url` (prefixo fixo do repositório) usados (7.5.4).
+- **Rede e privacidade (aviso de atualização, 7.5):**
+  - opt-in, desligado por padrão; com a opção desligada o Fervura não abre nenhuma conexão. A
+    migração não liga a opção;
+  - só um `GET` à API do GitHub, com cabeçalhos genéricos (`User-Agent: Fervura/<versão>`), sem
+    dados do usuário ou da máquina. O GitHub recebe o endereço IP e o horário, como em qualquer
+    acesso;
+  - nada é baixado nem executado; o único dado gravado é a opção no `config.json` e as linhas
+    de log (só com dados validados);
+  - redirecionamento só para `https://api.github.com/`.
+- **TLS da verificação:** certificado e nome do host sempre verificados, mínimo TLS 1.2. No
+  Windows, a confiança vem do **repositório de certificados do Windows, que inclui os do usuário
+  atual** (lojas `CurrentUser`, graváveis pelo usuário comum), além dos da máquina.
+  `SSL_CERT_FILE`/`SSL_CERT_DIR` do ambiente herdado são ignorados. Isso protege contra a rede e
+  o proxy, mas **não contra código já rodando na conta do usuário**, que pode instalar um
+  certificado raiz e interceptar a resposta. Aceito na etapa 1 porque a página aberta fica
+  presa ao prefixo do repositório, a tag é validada e nada é executado: no pior caso, um aviso
+  falso que leva à página legítima, ou a supressão do aviso. **Na etapa 2, a confiança no
+  instalador baixado deve vir da assinatura Authenticode com editor fixado, nunca só do TLS.**
+- **Proxy:** o `urllib` usa o proxy do ambiente ou do registro do usuário. O túnel `CONNECT`
+  mantém o TLS de ponta a ponta; um proxy sozinho só consegue bloquear ou observar a
+  verificação, não alterar a resposta.
+- **Página aberta sem elevação (7.5.5):** pelo Explorer da área de trabalho, via COM
+  (`CLSCTX_LOCAL_SERVER`), nunca por `webbrowser`, `os.startfile`, `ShellExecuteW` ou
+  `explorer.exe`, que herdariam o token elevado. O Explorer é conferido por `TokenElevation`
+  antes do `ShellExecute`; elevado ou desconhecido = nada é aberto, e o usuário usa "Copiar
+  link". Um processo de integridade média que se passasse pelo servidor COM `ShellWindows` não
+  ganha privilégio: só recebe a URL já validada e parâmetros de texto e número. O registro do
+  `ShellWindows` fica em HKLM (`RunAs=Interactive User`), sem sobrescrita em
+  `HKCU\Software\Classes` (conferido na revisão).
 - **Configuração antiga:** apenas lida em `%APPDATA%` (com as mesmas checagens); nada é apagado
   nem renomeado lá.
-- **Dependências:** `Pillow>=13.0.0`; o build usa `pip install --upgrade`. O `setuptools>=84.1.0`
+- **Dependências:** `Pillow>=13.0.0`; o build usa `pip install --upgrade`. O aviso de
+  atualização não acrescenta dependência (só biblioteca padrão e `ctypes`). O `setuptools>=84.1.0`
   fica só no ambiente de build e é excluído do PyInstaller. As versões não são fixadas com hash
   (seção 15).
 - Executáveis **não assinados**. O SmartScreen mostra "Editor desconhecido", e o Controle de
@@ -877,7 +1081,7 @@ juntos: os módulos do PawnIO vêm embutidos na LHM.
 | Proposta de ícone fora do build | Avaliar a arte antes de trocar a identidade visual |
 | Dados em `%ProgramData%\Fervura` protegida, não em `%APPDATA%` | O processo elevado gravando numa pasta controlada pelo usuário comum permite redirecionar gravações e exclusões por links |
 | Recusar a pasta (modo seguro) em vez de apagar e recriar | Apagar, mover ou seguir algo plantado por outro usuário é exatamente o que um ataque por link explora; recusar não toca em nada |
-| Configuração por máquina | Consequência da pasta única em `%ProgramData%`, aprovada pelo usuário ao decidir a mudança; a configuração tem uma única opção (a fonte) |
+| Configuração por máquina | Consequência da pasta única em `%ProgramData%`, aprovada pelo usuário ao decidir a mudança; a configuração tem duas opções (a fonte e a verificação de atualizações) |
 | Caminhos e usuário sem variáveis de ambiente | O processo elevado herda o ambiente do usuário não elevado, que o controla por `HKCU\Environment` |
 | Sem alternativa (`%ProgramData%`, `C:\ProgramData`) quando o caminho não resolve | Uma alternativa pelo ambiente reabriria o mesmo problema; o modo seguro é visível e não grava nada |
 | Permissões dos arquivos existentes redefinidas ao abrir | Arquivos criados antes da proteção (ou por versão anterior) podiam ter ACEs explícitas que sobrevivem à troca da DACL da pasta |
@@ -887,6 +1091,16 @@ juntos: os módulos do PawnIO vêm embutidos na LHM.
 | Log rotativo (1 MB, 3 cópias) e falhas de conexão uma vez por estado | O log não cresce sem limite com o display ausente ou um erro repetido a cada segundo |
 | `--interval` mínimo de 0,1 s | Valores menores, `nan` ou `inf` fariam o ciclo girar sem pausa ou travar |
 | Sair espera o `Sender` por até 3 s | Fecha a porta serial e a LHM de forma ordenada, sem deixar uma thread travada impedir a saída |
+| Verificação de atualizações opt-in, desligada por padrão | Sem a escolha do usuário, o programa nunca acessa a rede |
+| `check_updates` não é migrado de `%APPDATA%` | A opção nova precisa de uma escolha explícita nesta versão |
+| Etapa 1 só avisa; nada é baixado nem executado | O processo é elevado: executar um instalador baixado exige confiar numa assinatura de código, que o projeto ainda não tem. A instalação automática (etapa 2) fica para depois da assinatura |
+| Página aberta pelo Explorer da área de trabalho (COM), não por `webbrowser`/`os.startfile` | Chamados do processo elevado, abririam o navegador também elevado |
+| Sem alternativa elevada quando a abertura falha; "Copiar link" | Uma alternativa elevada desfaria a proteção; copiar o link sempre funciona |
+| TLS com o repositório de certificados do Windows, não o contexto padrão do Python | O padrão aceitaria `SSL_CERT_FILE`/`SSL_CERT_DIR`, herdados do ambiente do usuário comum (mesma lógica de 7.3.4) |
+| Redirecionamento só para `https://api.github.com/` | A resposta só é aceita da API do GitHub |
+| Repositório renomeado no GitHub para `daniloporfirio/fervura`, em minúsculas, igual a `UPDATE_REPO` | A validação do `html_url` diferencia maiúsculas; com grafias diferentes, a página da release nunca seria aceita e o aviso sempre levaria a `.../releases/latest` |
+| Falhas da verificação só no log, uma vez por estado, sem retentativa | Enquanto não houver release, a API responde 404; o usuário não precisa ver isso, e o log não cresce |
+| Versão única em `fervura/__init__.py`, passada ao Inno Setup pelo build | Programa, log, comparação e instalador não divergem; o padrão `0.0.0-dev` no `.iss` deixa evidente uma compilação à mão |
 
 ---
 
@@ -906,8 +1120,19 @@ juntos: os módulos do PawnIO vêm embutidos na LHM.
   primeira execução (a pasta-mãe permite criar pastas). O Fervura recusa a pasta e fica em modo
   seguro (sem salvar configuração, sem log, sem ativar a inicialização), com o aviso visível na
   janela; um administrador resolve apagando a pasta. Aceito: não há escalada de privilégio.
-- **Configuração compartilhada entre usuários:** a fonte escolhida vale para todos os usuários
-  do computador (7.3.1).
+- **Configuração compartilhada entre usuários:** a fonte escolhida e a opção "Verificar
+  atualizações" valem para todos os usuários do computador (7.3.1).
+- **Repositório sem release:** enquanto `daniloporfirio/fervura` (7.5.2) não tiver release
+  publicada, a verificação registra `update check failed: HTTP 404`, e os casos `UPD-04` a
+  `UPD-07` e `SEC-06` do guia não podem ser feitos.
+- **Etapa 2 (instalação automática):** não implementada. Depende de assinatura de código; o
+  instalador baixado só poderá ser executado se a assinatura Authenticode, com editor fixado,
+  conferir (seção 13).
+- **Explorer elevado ou UAC desligado:** a área de trabalho roda elevada e "Abrir página de
+  download" não abre nada; o usuário usa "Copiar link" (7.5.5). Teste com o Fervura instalado e
+  elevado ainda manual (`SEC-06` do guia).
+- **`Fervura.exe` sem recurso de versão:** o instalador tem a versão do produto, mas o executável
+  não (o PyInstaller aceitaria `--version-file`). Melhoria possível, não requisito.
 - **Exceção fora de `SensorHub.read()`** no ciclo de envio é registrada, mas não gera `Update`:
   a janela e a bandeja continuam mostrando o último estado (6.3).
 - **Reforços de segurança futuros** (achados informativos da revisão de segurança, sem correção
@@ -922,3 +1147,19 @@ juntos: os módulos do PawnIO vêm embutidos na LHM.
     checagens de link e tamanho);
   - fixar as dependências com hashes (`pip --require-hashes`);
   - assinatura de código do executável e do instalador.
+- **Riscos aceitos do aviso de atualização** (achados INFORMATIVA da revisão de segurança, sem
+  correção na etapa 1):
+  - **certificados do usuário atual:** `ssl.enum_certificates` junta também as lojas
+    `CurrentUser` (`HKCU\Software\Microsoft\SystemCertificates\CA` é gravável pelo usuário
+    comum). Código do usuário comum poderia interceptar a resposta, com ajuda do proxy. Sem
+    escalada na etapa 1 (seção 13); obrigatório resolver pela assinatura na etapa 2. A docstring
+    de `_https_context` em `updates.py` registra esse limite;
+  - **proxy herdado** do ambiente ou do registro do usuário: mantido; só bloqueia ou observa;
+  - **falsificação do servidor COM `ShellWindows`** por um processo de integridade média: sem
+    escalada (só recebe a URL validada); a checagem `TokenElevation` é defesa extra;
+  - **timeout por operação:** os 10 s valem para cada operação de rede, não para a requisição
+    inteira. Um servidor que envie bytes muito devagar prende a thread de fundo por mais tempo;
+    a leitura continua limitada a 1 MiB, a interface não trava e o Sair não espera a thread.
+- **Cópia instalada antiga com `setuptools`:** uma instalação feita antes da exclusão do
+  `setuptools` ainda tem `C:\Program Files\Fervura\_internal\setuptools`; o `dist` atual não. Some
+  ao reinstalar (conferir `SEC-05` depois de reinstalar).
