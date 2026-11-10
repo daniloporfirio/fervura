@@ -9,6 +9,9 @@ Atende toda a linha Pichau Aqua:
 - Aqua 240X
 - Aqua 360X
 
+<img width="403" height="552" alt="image" src="https://github.com/user-attachments/assets/70a6bb4e-6542-451c-aa1e-96f685906001" />
+
+
 ### O que ele faz
 
 - Lê a temperatura da CPU e da GPU (via [LibreHardwareMonitorLib](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor)
@@ -18,6 +21,8 @@ Atende toda a linha Pichau Aqua:
 - Encontra o display sozinho pelo VID/PID do chip USB e reconecta se o cabo for removido.
 - Pode iniciar com o Windows (tarefa agendada, sem pedir o UAC a cada logon).
 
+<hr>
+
 ### Requisitos 
 
 - Windows 10 versão 1809 ou mais novo, ou Windows 11, 64 bits.
@@ -26,18 +31,21 @@ Atende toda a linha Pichau Aqua:
   oficial, sem modificações.
 - Um display compatível com o protocolo descrito na [especificação](specification.md#3-protocolo-do-display-protocolpy).
 
+<hr>
+
 ### Instalação
 
-Baixe o `A versão mais recente` do Fervura na página de *[Releases](https://github.com/daniloporfirio/fervura/releases)*
-- execute o arquivo build, o terminal irá abrir e a pasta dist será criada no mesmo diretório
-- dentro da pasta dist estará o instalador Fervura-Setup-{versão}
-- execute o instalador e aceite os termos, pronto!
+Baixe o arquivo .exe da versão mais recente do Fervura na página de *[Releases](https://github.com/daniloporfirio/fervura/releases)*
 
-Agora é só executar o aplicativo e monitorar sua temperatura pelo display ou barra de tarefas 😊
+- Execute o instalador e aceite os termos.
+- Decida se será criado um ícone na área de trabalho (desktop).
+- Conclua o instalador, pronto! Agora é só executar o aplicativo e monitorar sua temperatura pelo display ou barra de tarefas 😊
 
 🚫 Observação: O executável **não é assinado digitalmente**. Por isso o SmartScreen pode mostrar "Editor
 desconhecido", e o Controle de Aplicativo Inteligente do Windows 11, quando ligado, pode
 bloquear o programa.
+
+<hr>
 
 ### Uso
 
@@ -84,6 +92,8 @@ Para rodar só os testes automatizados:
 py -3.12 -m unittest tests/test_protocol.py tests/test_app.py tests/test_datadir.py -v
 ```
 
+<hr>
+
 ### Documentação
 
 - [specification.md](specification.md): como o programa funciona e as regras que precisam ser
@@ -91,6 +101,8 @@ py -3.12 -m unittest tests/test_protocol.py tests/test_app.py tests/test_datadir
 - [testing_guide.md](testing_guide.md): testes automatizados e manuais obrigatórios antes de
   cada versão.
 - [BUILD.md](BUILD.md): como gerar o executável e o instalador.
+
+<hr>
 
 ### Licença
 
