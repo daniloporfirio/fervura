@@ -1,4 +1,4 @@
-# Fervura
+# Fervura 🔥
 
 O Fervura é um software para Windows que mostra a temperatura da CPU ou da GPU em um **display USB de
 temperatura de dois dígitos**. Ele fica na bandeja do sistema, com a temperatura atual no ícone, e
@@ -18,7 +18,7 @@ Atende toda a linha Pichau Aqua:
 - Encontra o display sozinho pelo VID/PID do chip USB e reconecta se o cabo for removido.
 - Pode iniciar com o Windows (tarefa agendada, sem pedir o UAC a cada logon).
 
-### Requisitos
+### Requisitos 
 
 - Windows 10 versão 1809 ou mais novo, ou Windows 11, 64 bits.
 - Permissão de administrador: a temperatura da CPU só pode ser lida assim.
@@ -28,10 +28,14 @@ Atende toda a linha Pichau Aqua:
 
 ### Instalação
 
-Baixe o `Fervura-Setup-<versão>.exe` na página de *Releases*, execute e aceite os termos. Depois de instalar,
-abra o Fervura pelo menu Iniciar. Pronto, agora é só usar!
+Baixe o `A versão mais recente` do Fervura na página de *[Releases](https://github.com/daniloporfirio/fervura/releases)*
+- execute o arquivo build, o terminal irá abrir e a pasta dist será criada no mesmo diretório
+- dentro da pasta dist estará o instalador Fervura-Setup-{versão}
+- execute o instalador e aceite os termos, pronto!
 
-Observação: O executável **não é assinado digitalmente**. Por isso o SmartScreen pode mostrar "Editor
+Agora é só executar o aplicativo e monitorar sua temperatura pelo display ou barra de tarefas 😊
+
+🚫 Observação: O executável **não é assinado digitalmente**. Por isso o SmartScreen pode mostrar "Editor
 desconhecido", e o Controle de Aplicativo Inteligente do Windows 11, quando ligado, pode
 bloquear o programa.
 
@@ -53,18 +57,12 @@ Argumentos de linha de comando para curiosos:
 A configuração e o log ficam em `C:\ProgramData\Fervura`, numa pasta protegida em que só
 administradores escrevem.
 
+<br>
 
-# Gerar novas versões do fervura
+# Modificar instalador
 Se você quer alterar o fervura por conta própria e gerar um novo executável basta seguir o guia abaixo.
 
-### Agentes de IA
-O Fervura foi feito com o auxilio de IA. O projeto conta com alguns [agentes](https://github.com/daniloporfirio/Fervura/tree/main/.claude/agents) para facilitar o desenvolvimento:
-- Tadeu: Programador.
-- Regis: Primeiro Code Review.
-- Luana: Segundo Code Review com foco em segurança.
-- Patricia: Documentador, responsável por atualizar a [especificação](https://github.com/daniloporfirio/Fervura/blob/main/specification.md) onde está o esquema arquitetural do software.
-
-Dentro do [CLAUDE.md](https://github.com/daniloporfirio/Fervura/blob/main/CLAUDE.md) é configurado a orquestração dos agentes de forma automática, primeiro o tadeu cria a funcionalidade, depois o regis faz o primeiro code review, depois a luana faz o segundo code review e por fim a patricia atualiza a especificação do projeto. Caso o regis ou luana não aprove o code review, a task volta para o tadeu gerando um loop de iteração entre eles até que os dois reviewers aprovem a tarefa.
+⚠️ **Mas atenção:** o Fervura distribui algumas bibliotecas, os direitos da PawnIO especifica que ela deve ser distribuída com o instalador original, sem modificações.
 
 ### Build
 Para gerar um novo instalador .exe você precisa de:
